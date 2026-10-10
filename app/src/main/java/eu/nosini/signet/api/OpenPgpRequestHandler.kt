@@ -108,6 +108,7 @@ class OpenPgpRequestHandler(
                                 )
                                 .isNotEmpty()
                     }
+                    .distinctBy { it.fingerprint }
                     .singleOrNull() ?: return null
             }
             .distinctBy { it.id }
@@ -154,6 +155,7 @@ class OpenPgpRequestHandler(
                                             it == address || email(it) == email(address)
                                         }
                                 }
+                                .distinctBy { it.fingerprint }
                                 .singleOrNull()
                         }
                 requireNotNull(key) { "Key is missing or ambiguous; import it into Signet" }

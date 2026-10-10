@@ -29,6 +29,161 @@ class FollowupTest {
     private val caller = Caller(1000, listOf(CallerApp("review.app", setOf("cert"), "Review")))
 
     @Test
+    fun importedKeyAlsoReceivedThroughAutocryptRemainsResolvable() {
+        val repo = Repository(RuntimeEnvironment.getApplication())
+        repo.create("password")
+        val public = Crypto.publicPart(CryptoTest.modern)
+        repo.importKey(Crypto.armor(public))
+        repo.updatePeer(caller, "ed@example.org", public.encoded, System.currentTimeMillis())
+        repo.registrations.register(caller)
+        val handler =
+            OpenPgpRequestHandler(
+                object : KeyBackend {
+                    override fun keys() = repo.keys()
+
+                    override fun peers(caller: Caller) = repo.peers(caller)
+
+                    override val unlocked
+                        get() = repo.unlocked
+
+                    override fun secret(id: Long) = repo.secret(id)
+
+                    override fun updatePeer(
+                        caller: Caller,
+                        address: String,
+                        bytes: ByteArray,
+                        date: Long,
+                    ) = repo.updatePeer(caller, address, bytes, date)
+                },
+                repo.registrations,
+                repo.approvals,
+            ) { mode, _, _, _ ->
+                Intent()
+                    .putExtra(RESULT_CODE, RESULT_CODE_USER_INTERACTION_REQUIRED)
+                    .putExtra("mode", mode)
+            }
+        fun request(action: String) =
+            Intent(action)
+                .putExtra(EXTRA_API_VERSION, 11)
+                .putExtra(EXTRA_USER_IDS, arrayOf("ed@example.org"))
+        val ids = handler.handle(request(ACTION_GET_KEY_IDS), null, ByteArrayOutputStream(), caller)
+        val status =
+            handler.handle(
+                request(ACTION_QUERY_AUTOCRYPT_STATUS),
+                null,
+                ByteArrayOutputStream(),
+                caller,
+            )
+        val encrypt =
+            handler.handle(
+                request(ACTION_ENCRYPT).putExtra(EXTRA_OPPORTUNISTIC_ENCRYPTION, true),
+                "hello".byteInputStream(),
+                ByteArrayOutputStream(),
+                caller,
+            )
+        val get =
+            handler.handle(
+                request(ACTION_GET_KEY).putExtra(EXTRA_USER_ID, "ed@example.org"),
+                null,
+                ByteArrayOutputStream(),
+                caller,
+            )
+        println(
+            "vault=${repo.keys().size} peers=${repo.peers(caller).size} sameFingerprint=${repo.keys().single().fingerprint == repo.peers(caller).single().fingerprint}"
+        )
+        println(
+            "idsCode=${ids.getIntExtra(RESULT_CODE, -1)} mode=${ids.getStringExtra("mode")} status=${status.getIntExtra(RESULT_AUTOCRYPT_STATUS, -1)} encryptCode=${encrypt.getIntExtra(RESULT_CODE, -1)} getCode=${get.getIntExtra(RESULT_CODE, -1)}"
+        )
+        assertArrayEquals(
+            longArrayOf(public.publicKey.keyID),
+            ids.getLongArrayExtra(RESULT_KEY_IDS),
+        )
+        assertEquals(AUTOCRYPT_STATUS_AVAILABLE, status.getIntExtra(RESULT_AUTOCRYPT_STATUS, -1))
+        assertEquals(RESULT_CODE_SUCCESS, encrypt.getIntExtra(RESULT_CODE, -1))
+        assertEquals(RESULT_CODE_SUCCESS, get.getIntExtra(RESULT_CODE, -1))
+        assertEquals(
+            "A single certificate is not ambiguous",
+            RESULT_CODE_SUCCESS,
+            ids.getIntExtra(RESULT_CODE, -1),
+        )
+    }
+
+    @Test
+    fun sharedPeerCertificateStillResolvesEachOfItsBoundAddresses() {
+        @Suppress("DEPRECATION")
+        val ring =
+            org.pgpainless.PGPainless.modifyKeyRing(CryptoTest.modern)
+                .addUserId(
+                    "Other <other@example.org>",
+                    org.pgpainless.key.protection.SecretKeyRingProtector.unprotectedKeys(),
+                )
+                .done()
+                .pgpSecretKeyRing
+        val public = Crypto.publicPart(ring)
+        val repo = Repository(RuntimeEnvironment.getApplication())
+        for (address in listOf("ed@example.org", "other@example.org")) {
+            repo.updatePeer(caller, address, public.encoded, System.currentTimeMillis())
+        }
+        repo.registrations.register(caller)
+        val handler =
+            OpenPgpRequestHandler(
+                object : KeyBackend {
+                    override fun keys() = repo.keys()
+
+                    override fun peers(caller: Caller) = repo.peers(caller)
+
+                    override val unlocked
+                        get() = repo.unlocked
+
+                    override fun secret(id: Long) = repo.secret(id)
+
+                    override fun updatePeer(
+                        caller: Caller,
+                        address: String,
+                        bytes: ByteArray,
+                        date: Long,
+                    ) = repo.updatePeer(caller, address, bytes, date)
+                },
+                repo.registrations,
+                repo.approvals,
+            ) { mode, _, _, _ ->
+                Intent().putExtra("mode", mode)
+            }
+        assertEquals(2, repo.peers(caller).size)
+        for (address in listOf("ed@example.org", "other@example.org")) {
+            val ids =
+                handler.handle(
+                    Intent(ACTION_GET_KEY_IDS)
+                        .putExtra(EXTRA_API_VERSION, 11)
+                        .putExtra(EXTRA_USER_IDS, arrayOf(address)),
+                    null,
+                    ByteArrayOutputStream(),
+                    caller,
+                )
+            assertEquals(RESULT_CODE_SUCCESS, ids.getIntExtra(RESULT_CODE, -1))
+            assertArrayEquals(
+                longArrayOf(public.publicKey.keyID),
+                ids.getLongArrayExtra(RESULT_KEY_IDS),
+            )
+            val out = ByteArrayOutputStream()
+            val get =
+                handler.handle(
+                    Intent(ACTION_GET_KEY)
+                        .putExtra(EXTRA_API_VERSION, 11)
+                        .putExtra(EXTRA_USER_ID, address),
+                    null,
+                    out,
+                    caller,
+                )
+            assertEquals(RESULT_CODE_SUCCESS, get.getIntExtra(RESULT_CODE, -1))
+            assertEquals(
+                Crypto.fingerprint(public),
+                Crypto.fingerprint(Crypto.publicKey(out.toByteArray())),
+            )
+        }
+    }
+
+    @Test
     fun queuedUnlockMustNotUndoALaterLock() {
         MockWebServer().use { server ->
             val started = CountDownLatch(1)
