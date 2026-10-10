@@ -151,6 +151,29 @@ class RegressionProviderTest {
         assertNotNull(listOf(indexed).find { it.id == approvedKey })
     }
 
+    @Test
+    fun signatureResultExcludesUnboundUserIds() {
+        val key = CryptoTest.modern
+        val public = Crypto.publicPart(key)
+        val bytes = public.encoded
+        val primary = public.publicKey.publicKeyPacket.encoded
+        val extra = org.bouncycastle.bcpg.UserIDPacket("Victim <victim@example.org>").encoded
+        val forged = Crypto.publicKey(primary + extra + bytes.copyOfRange(primary.size, bytes.size))
+        val indexed = IndexedKey(Crypto.armor(forged), false)
+        val signed = ByteArrayOutputStream()
+        Crypto.produce("signed message".byteInputStream(), signed, signer = key, cleartext = true)
+        val verify =
+            handler(listOf(indexed)) { m, _ -> Intent().putExtra("mode", m) }
+                .handle(
+                    request(ACTION_DECRYPT_VERIFY),
+                    signed.toByteArray().inputStream(),
+                    ByteArrayOutputStream(),
+                    caller,
+                )
+        val result = verify.getParcelableExtra<OpenPgpSignatureResult>(RESULT_SIGNATURE)!!
+        assertEquals(OpenPgpSignatureResult.RESULT_VALID_KEY_UNCONFIRMED, result.result)
+        assertFalse(result.userIds.contains("Victim <victim@example.org>"))
+    }
 }
 
 class RegressionVaultTest {

@@ -300,7 +300,7 @@ class OpenPgpRequestHandler(
             val signature =
                 if (verified != null) {
                     val issuer = find(verified.signature.keyID, caller)
-                    val users = issuer?.info?.userIds.orEmpty()
+                    val users = issuer?.info?.validUserIds.orEmpty()
                     val sender = request.getStringExtra(EXTRA_SENDER_ADDRESS)
                     val senderStatus =
                         if (sender == null) OpenPgpSignatureResult.SenderStatusResult.UNKNOWN
