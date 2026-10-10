@@ -51,6 +51,51 @@ class RegressionInteropTest {
         }
 
     /** Thunderbird's Autocrypt helper calls GET_KEY without EXTRA_REQUEST_ASCII_ARMOR. */
+    @Test
+    fun getKeyDefaultsToBinarySupportsAddressAndMinimize() {
+        @Suppress("DEPRECATION")
+        val key =
+            org.pgpainless.PGPainless.modifyKeyRing(CryptoTest.modern)
+                .addUserId(
+                    "Second <second@example.org>",
+                    org.pgpainless.key.protection.SecretKeyRingProtector.unprotectedKeys(),
+                )
+                .done()
+                .pgpSecretKeyRing
+        val indexed = IndexedKey(Crypto.armor(Crypto.publicPart(key)), true)
+        val out = ByteArrayOutputStream()
+        val result =
+            handler(listOf(indexed))
+                .handle(
+                    Intent(ACTION_GET_KEY)
+                        .putExtra(EXTRA_API_VERSION, 11)
+                        .putExtra(EXTRA_KEY_ID, indexed.id)
+                        .putExtra(EXTRA_MINIMIZE, true)
+                        .putExtra(EXTRA_MINIMIZE_USER_ID, "ed@example.org"),
+                    null,
+                    out,
+                    caller,
+                )
+        assertEquals(RESULT_CODE_SUCCESS, result.getIntExtra(RESULT_CODE, -1))
+        assertFalse(String(out.toByteArray()).startsWith("-----BEGIN PGP PUBLIC KEY BLOCK-----"))
+        assertEquals(indexed.fingerprint, Crypto.fingerprint(Crypto.publicKey(out.toByteArray())))
+        assertEquals(
+            listOf("Ed Test <ed@example.org>"),
+            Crypto.publicKey(out.toByteArray()).publicKey.userIDs.asSequence().toList(),
+        )
+        val byUser =
+            handler(listOf(indexed))
+                .handle(
+                    Intent(ACTION_GET_KEY)
+                        .putExtra(EXTRA_API_VERSION, 11)
+                        .putExtra(EXTRA_USER_ID, "ed@example.org"),
+                    null,
+                    ByteArrayOutputStream(),
+                    caller,
+                )
+        assertEquals(RESULT_CODE_SUCCESS, byUser.getIntExtra(RESULT_CODE, -1))
+    }
+
     /** Android imports and uses a subkey-only export (GNU dummy primary). */
     @Test
     fun subkeyOnlyExportWorksOnAndroid() {

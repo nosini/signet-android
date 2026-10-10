@@ -140,13 +140,36 @@ class OpenPgpRequestHandler(
                 return success().putExtra(RESULT_KEY_IDS, chosen.map { it.id }.toLongArray())
             }
             ACTION_GET_KEY -> {
+                val user = request.getStringExtra(EXTRA_USER_ID)
                 val key =
-                    find(request.getLongExtra(EXTRA_KEY_ID, 0), caller)
-                        ?: error("Key is missing; import it into Signet")
+                    if (request.hasExtra(EXTRA_KEY_ID))
+                        find(request.getLongExtra(EXTRA_KEY_ID, 0), caller)
+                    else
+                        user?.let { address ->
+                            keys
+                                .filter { key ->
+                                    if (key.peerAddress != null) key.peerAddress == email(address)
+                                    else
+                                        key.info.validUserIds.any {
+                                            it == address || email(it) == email(address)
+                                        }
+                                }
+                                .singleOrNull()
+                        }
+                requireNotNull(key) { "Key is missing or ambiguous; import it into Signet" }
+                val certificate =
+                    if (request.getBooleanExtra(EXTRA_MINIMIZE, false))
+                        Crypto.minimize(
+                            key.certificate,
+                            request.getStringExtra(EXTRA_MINIMIZE_USER_ID)
+                                ?: user
+                                ?: key.peerAddress,
+                        )
+                    else key.certificate
                 output.write(
-                    if (request.getBooleanExtra(EXTRA_REQUEST_ASCII_ARMOR, true))
-                        key.armor.toByteArray()
-                    else key.certificate.encoded
+                    if (request.getBooleanExtra(EXTRA_REQUEST_ASCII_ARMOR, false))
+                        Crypto.armor(certificate).toByteArray()
+                    else certificate.encoded
                 )
                 return success()
             }

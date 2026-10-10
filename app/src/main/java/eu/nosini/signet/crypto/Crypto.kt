@@ -29,6 +29,60 @@ object Crypto {
 
     fun publicPart(key: PGPSecretKeyRing): PGPPublicKeyRing = PGPainless.extractCertificate(key)
 
+    /** One certified identity, current self-signatures and usable component keys. */
+    fun minimize(ring: PGPPublicKeyRing, requested: String?): PGPPublicKeyRing {
+        val info = pgp.inspect(pgp.toCertificate(ring))
+        val user =
+            info.validUserIds.firstOrNull {
+                it == requested ||
+                    eu.nosini.signet.api.OpenPgpRequestHandler.email(it) ==
+                        requested?.let(eu.nosini.signet.api.OpenPgpRequestHandler::email)
+            }
+                ?: info.primaryUserId?.takeIf { it in info.validUserIds }
+                ?: info.validUserIds.firstOrNull()
+                ?: error("Certificate has no valid identity")
+        var primary = ring.publicKey
+        primary.userIDs.asSequence().toList().forEach {
+            primary = PGPPublicKey.removeCertification(primary, it)
+        }
+        primary.userAttributes.asSequence().toList().forEach {
+            primary = PGPPublicKey.removeCertification(primary, it)
+        }
+        primary.keySignatures.asSequence().toList().forEach {
+            primary = PGPPublicKey.removeCertification(primary, it)
+        }
+        primary =
+            PGPPublicKey.addCertification(
+                primary,
+                user,
+                info.getLatestUserIdCertification(user) ?: error("Missing self-certification"),
+            )
+        info.latestDirectKeySelfSignature?.let {
+            primary = PGPPublicKey.addCertification(primary, it)
+        }
+        info.revocationSelfSignature?.let { primary = PGPPublicKey.addCertification(primary, it) }
+        val usable =
+            (info.getEncryptionSubkeys(EncryptionPurpose.ANY) + info.signingSubkeys)
+                .map { it.keyIdentifier.keyId }
+                .toSet()
+        val subkeys =
+            ring.publicKeys
+                .asSequence()
+                .filter { !it.isMasterKey && it.keyID in usable }
+                .map { key ->
+                    var minimal = key
+                    key.signatures.asSequence().toList().forEach {
+                        minimal = PGPPublicKey.removeCertification(minimal, it)
+                    }
+                    info.getCurrentSubkeyBindingSignature(key.keyID)?.let {
+                        minimal = PGPPublicKey.addCertification(minimal, it)
+                    }
+                    minimal
+                }
+                .toList()
+        return PGPPublicKeyRing(listOf(primary) + subkeys)
+    }
+
     fun generate(userId: String, rsa: Boolean = false): PGPSecretKeyRing {
         val key =
             if (rsa) pgp.generateKey().rsaKeyRing(userId, RsaLength._4096)
