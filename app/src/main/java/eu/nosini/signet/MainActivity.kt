@@ -134,6 +134,14 @@ class MainActivity : FragmentActivity() {
         LaunchedEffect(shareUri) {
             shareUri?.let { uri ->
                 runCatching {
+                    require(
+                        uri.scheme == "content" &&
+                            packageManager
+                                .resolveContentProvider(uri.authority ?: "", 0)
+                                ?.packageName != packageName
+                    ) {
+                        "Import requires an external content URI"
+                    }
                     withContext(Dispatchers.IO) {
                         contentResolver.openInputStream(uri)!!.use {
                             String(readBounded(it, 16 * 1024 * 1024))
