@@ -27,6 +27,9 @@ object PendingFlows {
     @Synchronized
     fun add(mode: String, caller: Caller, request: Intent, key: Long): String {
         flows.entries.removeAll { it.value.expires <= SystemClock.elapsedRealtime() }
+        require(flows.values.count { it.caller.uid == caller.uid } < 8) {
+            "Too many pending requests for this app"
+        }
         require(flows.size < 128) { "Too many pending requests" }
         val id = UUID.randomUUID().toString()
         flows[id] = Flow(mode, caller, request, key, SystemClock.elapsedRealtime() + 120_000)
