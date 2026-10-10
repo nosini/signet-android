@@ -27,4 +27,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "signet"
-include(":openpgp-api")
+include(":app", ":openpgp-api")

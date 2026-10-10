@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <application android:name=".SignetApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false" android:networkSecurityConfig="@xml/network_security_config">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" /><category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pgp-keys" /><data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pgp-keys" android:scheme="content" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".api.InteractionActivity" android:exported="false" />
+        <service android:name=".api.OpenPgpService" android:exported="true">
+            <intent-filter>
+                <action android:name="org.openintents.openpgp.IOpenPgpService2" />
+                <action android:name="org.openintents.openpgp.IOpenPgpService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>
