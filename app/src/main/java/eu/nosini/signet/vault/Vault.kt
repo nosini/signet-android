@@ -316,7 +316,7 @@ object VaultMerge {
                     .map { it.copy(history = emptyList()) }
                     .distinctBy(::signature)
                     .filter { signature(it) != signature(snapshot) }
-                    .sortedByDescending { time(it.times?.lastModificationTime) }
+                    .sortedBy { time(it.times?.lastModificationTime) }
             entries[id] = Located(snapshot.copy(history = history), move.parent)
         }
         val rootId = local.content.group.uuid

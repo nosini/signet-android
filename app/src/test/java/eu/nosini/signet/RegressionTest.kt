@@ -254,4 +254,22 @@ class RegressionVaultTest {
         }
     }
 
+    @Test
+    fun historyStaysOldestFirstAcrossMergeAndEdits() {
+        val v1 = VaultCodec.put(VaultCodec.create("password"), "AAA", "1", null, "A", now)
+        val v2 = VaultCodec.put(v1, "AAA", "2", null, "A", now.plusSeconds(1))
+        val v3 = VaultCodec.put(v2, "AAA", "3", null, "A", now.plusSeconds(2))
+        val ascending = v3.keyEntries().single().history.map { it.fields[PUBLIC_KEY]!!.content }
+        assertEquals(listOf("1", "2"), ascending)
+        val remote = VaultCodec.put(v2, "AAA", "r", null, "A", now.plusSeconds(3))
+        val merged = VaultMerge.merge(v3, remote)
+        val mergedOrder =
+            merged.keyEntries().single().history.map { it.fields[PUBLIC_KEY]!!.content }
+        val next = VaultCodec.put(merged, "AAA", "4", null, "A", now.plusSeconds(4))
+        val nextOrder = next.keyEntries().single().history.map { it.fields[PUBLIC_KEY]!!.content }
+        println("history after merge: $mergedOrder; after next edit: $nextOrder")
+        assertEquals(listOf("1", "2", "3"), mergedOrder)
+        assertEquals(listOf("1", "2", "3", "r"), nextOrder)
+    }
+
 }
