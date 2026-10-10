@@ -4,6 +4,8 @@ package eu.nosini.signet
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.*
 
 fun FragmentActivity.biometric(
     repository: Repository,
@@ -25,27 +27,36 @@ fun FragmentActivity.biometric(
                     override fun onAuthenticationSucceeded(
                         result: BiometricPrompt.AuthenticationResult
                     ) {
-                        try {
-                            val authorized = result.cryptoObject!!.cipher!!
-                            if (enrollPassword != null) {
-                                val bytes = enrollPassword.toByteArray()
-                                try {
-                                    repository.secure.save("biometric", bytes, authorized)
-                                } finally {
-                                    bytes.fill(0)
+                        lifecycleScope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    val authorized = result.cryptoObject!!.cipher!!
+                                    if (enrollPassword != null) {
+                                        val bytes = enrollPassword.toByteArray()
+                                        try {
+                                            repository.secure.save("biometric", bytes, authorized)
+                                        } finally {
+                                            bytes.fill(0)
+                                        }
+                                        repository.preferences
+                                            .edit()
+                                            .putBoolean("biometric", true)
+                                            .apply()
+                                    } else {
+                                        val bytes = repository.secure.read("biometric", authorized)
+                                        try {
+                                            repository.unlock(String(bytes))
+                                        } finally {
+                                            bytes.fill(0)
+                                        }
+                                    }
                                 }
-                                repository.preferences.edit().putBoolean("biometric", true).apply()
-                            } else {
-                                val bytes = repository.secure.read("biometric", authorized)
-                                try {
-                                    repository.unlock(String(bytes))
-                                } finally {
-                                    bytes.fill(0)
-                                }
+                                done()
+                            } catch (e: Exception) {
+                                failure(
+                                    e.message ?: "Biometric unlock failed; use the master password"
+                                )
                             }
-                            done()
-                        } catch (e: Exception) {
-                            failure(e.message ?: "Biometric unlock failed; use the master password")
                         }
                     }
                 },

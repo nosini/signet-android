@@ -230,6 +230,7 @@ class InteractionActivity : FragmentActivity() {
                                         try {
                                             val result =
                                                 withContext(Dispatchers.IO) {
+                                                    val epoch = repo.sessionEpoch
                                                     require(
                                                         flow.expires > SystemClock.elapsedRealtime()
                                                     ) {
@@ -276,7 +277,7 @@ class InteractionActivity : FragmentActivity() {
                                                                 .apply()
                                                             data.putExtra(
                                                                 APPROVAL_TOKEN,
-                                                                repo.approvals.approve(
+                                                                repo.approve(
                                                                     flow.caller,
                                                                     data.action!!,
                                                                     flow.key,
@@ -285,6 +286,7 @@ class InteractionActivity : FragmentActivity() {
                                                                         2 -> Long.MAX_VALUE
                                                                         else -> 0L
                                                                     },
+                                                                    epoch,
                                                                 ),
                                                             )
                                                         }

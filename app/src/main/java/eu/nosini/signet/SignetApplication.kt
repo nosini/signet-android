@@ -62,7 +62,7 @@ data class IndexedKey(
         get() = Crypto.pgp.inspect(Crypto.pgp.toCertificate(certificate))
 }
 
-class Repository(val context: Context) {
+class Repository(val context: Context, private val davCredentials: (() -> DavConfig?)? = null) {
     val preferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     val secure = SecureStore(context)
     val registrations: Registrations = AppRegistrations(context)
@@ -70,17 +70,22 @@ class Repository(val context: Context) {
     val updates = MutableStateFlow(0)
     val file = File(context.filesDir, "vault.kdbx")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var lastUse = android.os.SystemClock.elapsedRealtime()
+    @Volatile private var lastUse = android.os.SystemClock.elapsedRealtime()
     private var lastSync = 0L
-    private var db: KeePassDatabase? = null
-    private val unlockedKeys = mutableMapOf<String, PGPSecretKeyRing>()
-    private var index = loadIndex("public-index.json")
-    private var peers = loadIndex("autocrypt-index.json")
+    @Volatile private var db: KeePassDatabase? = null
+    private val unlockedKeys = java.util.concurrent.ConcurrentHashMap<String, PGPSecretKeyRing>()
+    private val stateLock = Any()
+    private val generation = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var index = loadIndex("public-index.json")
+    @Volatile private var peers = loadIndex("autocrypt-index.json")
     var error: String? = null
         private set
 
+    val sessionEpoch: Long
+        get() = generation.get()
+
     val unlocked: Boolean
-        @Synchronized get() = db != null
+        get() = db != null
 
     init {
         scope.launch {
@@ -121,9 +126,9 @@ class Repository(val context: Context) {
         atomicWrite(File(context.filesDir, name), array.toString().toByteArray())
     }
 
-    @Synchronized fun keys(): List<IndexedKey> = index
+    fun keys(): List<IndexedKey> = index
 
-    @Synchronized fun peers(caller: Caller): List<IndexedKey> = peers.filter {
+    fun peers(caller: Caller): List<IndexedKey> = peers.filter {
         it.peerIdentity == caller.identity
     }
 
@@ -154,24 +159,33 @@ class Repository(val context: Context) {
         }
     }
 
-    @Synchronized
     fun touch() {
         lastUse = android.os.SystemClock.elapsedRealtime()
     }
 
-    @Synchronized
     fun lock() {
-        db = null
-        unlockedKeys.clear()
-        approvals.clear()
-        changed()
+        synchronized(stateLock) {
+            generation.incrementAndGet()
+            db = null
+            unlockedKeys.clear()
+            approvals.clear()
+            changed()
+        }
+    }
+
+    private fun commit(database: KeePassDatabase, epoch: Long) {
+        synchronized(stateLock) {
+            check(generation.get() == epoch) { "Vault was locked during the operation" }
+            db = database
+        }
     }
 
     @Synchronized
     fun unlock(password: String) {
+        val epoch = generation.get()
         val key = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
         try {
-            db = VaultCodec.read(file.readBytes(), credentials(password, key))
+            commit(VaultCodec.read(file.readBytes(), credentials(password, key)), epoch)
             refresh()
             touch()
             error = null
@@ -183,10 +197,11 @@ class Repository(val context: Context) {
 
     @Synchronized
     fun create(password: String) {
+        val epoch = generation.get()
         check(!file.exists()) { "Vault already exists" }
         val keyFile = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
         try {
-            db = VaultCodec.create(password, keyFile)
+            commit(VaultCodec.create(password, keyFile), epoch)
             save()
         } finally {
             keyFile?.fill(0)
@@ -202,6 +217,7 @@ class Repository(val context: Context) {
 
     @Synchronized
     fun importKey(text: String, passphrase: String = "") {
+        val epoch = generation.get()
         val database = db ?: error("Unlock the vault first")
         val secret = runCatching {
             Crypto.secretKey(text)
@@ -233,7 +249,7 @@ class Repository(val context: Context) {
                 previous?.fields?.get(PRIVATE_KEY)?.content?.let {
                     PGPSecretKeyRing.replacePublicKeys(Crypto.secretKey(it), joinedPublic)
                 }
-        db =
+        val updated =
             VaultCodec.put(
                 database,
                 fingerprint,
@@ -241,12 +257,17 @@ class Repository(val context: Context) {
                 joinedSecret?.let(Crypto::armor),
                 joinedPublic.publicKey.userIDs.asSequence().firstOrNull() ?: fingerprint,
             )
+        commit(updated, epoch)
         saveAndSync()
     }
 
     @Synchronized
     fun delete(entry: String) {
-        db = VaultCodec.delete(db ?: error("Unlock first"), java.util.UUID.fromString(entry))
+        val epoch = generation.get()
+        commit(
+            VaultCodec.delete(db ?: error("Unlock first"), java.util.UUID.fromString(entry)),
+            epoch,
+        )
         saveAndSync()
     }
 
@@ -264,8 +285,9 @@ class Repository(val context: Context) {
 
     @Synchronized
     private fun refresh() {
-        index =
-            db!!.keyEntries().mapNotNull { entry ->
+        val database = db ?: return
+        val refreshed =
+            database.keyEntries().mapNotNull { entry ->
                 runCatching {
                     val secret = entry.fields[PRIVATE_KEY]?.content?.takeIf { it.isNotBlank() }
                     val public =
@@ -275,7 +297,11 @@ class Repository(val context: Context) {
                 }
                     .getOrNull()
             }
-        writeIndex("public-index.json", index)
+        synchronized(stateLock) {
+            if (db !== database) return
+            index = refreshed
+        }
+        writeIndex("public-index.json", refreshed)
         changed()
     }
 
@@ -304,6 +330,7 @@ class Repository(val context: Context) {
 
     @Synchronized
     fun unlockProtected(id: Long, password: String) {
+        val epoch = generation.get()
         val database = db ?: error("Unlock the vault first")
         val candidates =
             database
@@ -316,9 +343,28 @@ class Repository(val context: Context) {
                         ring.publicKeys.asSequence().any { it.keyID == id }
                 }
         for ((armor, ring) in candidates) if (Crypto.protected(ring)) {
-            unlockedKeys[WebDav.hash(armor.toByteArray())] = Crypto.unprotect(ring, password)
+            val unlocked = Crypto.unprotect(ring, password)
+            synchronized(stateLock) {
+                check(generation.get() == epoch && db === database) {
+                    "Vault was locked during the operation"
+                }
+                unlockedKeys[WebDav.hash(armor.toByteArray())] = unlocked
+            }
         }
     }
+
+    fun approve(
+        caller: Caller,
+        action: String,
+        key: Long,
+        rememberMillis: Long,
+        epoch: Long,
+    ): String =
+        synchronized(stateLock) {
+            check(db != null && generation.get() == epoch) { "Vault was locked before approval" }
+            check(registrations.registered(caller)) { "App registration revoked" }
+            approvals.approve(caller, action, key, rememberMillis)
+        }
 
     @Synchronized
     fun checkPassword(password: String) {
@@ -337,6 +383,9 @@ class Repository(val context: Context) {
     }
 
     fun dav(): DavConfig? {
+        davCredentials?.let {
+            return it()
+        }
         val url = preferences.getString("dav-url", "")!!
         if (url.isBlank()) return null
         val password = secure.read("webdav")
@@ -365,6 +414,7 @@ class Repository(val context: Context) {
 
     @Synchronized
     fun sync() {
+        val epoch = generation.get()
         val config = dav() ?: return
         val database = db ?: error("Unlock the vault to sync")
         val json = JSONObject(preferences.getString("sync-state", "{}")!!)
@@ -376,7 +426,9 @@ class Repository(val context: Context) {
                 json.optString("remoteHash"),
             )
         val result = WebDav().sync(file, database, config, state)
-        db = result.database
+        synchronized(stateLock) {
+            if (generation.get() == epoch && db === database) db = result.database
+        }
         val s = result.state
         preferences
             .edit()
@@ -396,7 +448,6 @@ class Repository(val context: Context) {
         refresh()
     }
 
-    @Synchronized
     private fun tick() {
         val now = android.os.SystemClock.elapsedRealtime()
         if (db != null && now - lastUse >= preferences.getLong("lock-minutes", 5) * 60_000) {

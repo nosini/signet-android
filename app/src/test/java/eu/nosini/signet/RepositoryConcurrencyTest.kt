@@ -18,6 +18,51 @@ import org.robolectric.annotation.Config
 @Config(sdk = [28], application = Application::class)
 class RepositoryConcurrencyTest {
     @Test
+    fun slowSyncDoesNotBlockUiReadsOrLockAndCannotUnlockAgain() {
+        MockWebServer().use { server ->
+            val started = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") {
+                            started.countDown()
+                            check(release.await(5, TimeUnit.SECONDS))
+                            return MockResponse.Builder().code(404).build()
+                        }
+                        return MockResponse.Builder().code(204).build()
+                    }
+                }
+            server.start()
+            val repo =
+                Repository(RuntimeEnvironment.getApplication()) {
+                    DavConfig(server.url("/vault.kdbx").toString())
+                }
+            repo.create("password")
+            val executor = Executors.newFixedThreadPool(2)
+            val syncing = executor.submit<Unit> { repo.sync() }
+            try {
+                assertTrue(started.await(5, TimeUnit.SECONDS))
+                executor
+                    .submit<Unit> {
+                        assertTrue(repo.unlocked)
+                        repo.keys()
+                        repo.touch()
+                        repo.lock()
+                        assertFalse(repo.unlocked)
+                    }
+                    .get(200, TimeUnit.MILLISECONDS)
+            } finally {
+                release.countDown()
+                syncing.get(5, TimeUnit.SECONDS)
+                executor.shutdownNow()
+                repo.lock()
+            }
+            assertFalse(repo.unlocked)
+        }
+    }
+
+    @Test
     fun oneCallerCannotFillTheGlobalPendingFlowTable() {
         val caller = Caller(1000, listOf(CallerApp("one.app", setOf("cert"), "One")))
         val other = Caller(1001, listOf(CallerApp("two.app", setOf("cert"), "Two")))
