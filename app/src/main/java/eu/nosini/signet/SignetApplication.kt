@@ -71,7 +71,8 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
     val file = File(context.filesDir, "vault.kdbx")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var lastUse = android.os.SystemClock.elapsedRealtime()
-    private var lastSync = 0L
+    @Volatile private var lastSync = 0L
+    private val syncScheduled = java.util.concurrent.atomic.AtomicBoolean()
     @Volatile private var db: KeePassDatabase? = null
     private val unlockedKeys = java.util.concurrent.ConcurrentHashMap<String, PGPSecretKeyRing>()
     private val stateLock = Any()
@@ -195,7 +196,7 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
                 key?.fill(0)
             }
         }
-        scope.launch { runCatching { sync() }.onFailure { setError(it) } }
+        scheduleSync(epoch)
     }
 
     fun create(password: String, epoch: Long = sessionEpoch) =
@@ -261,7 +262,7 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
                 joinedPublic.publicKey.userIDs.asSequence().firstOrNull() ?: fingerprint,
             )
         commit(updated, epoch)
-        saveAndSync()
+        saveAndSync(epoch)
     }
 
     @Synchronized
@@ -271,7 +272,7 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
             VaultCodec.delete(db ?: error("Unlock first"), java.util.UUID.fromString(entry)),
             epoch,
         )
-        saveAndSync()
+        saveAndSync(epoch)
     }
 
     @Synchronized
@@ -281,9 +282,9 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
         touch()
     }
 
-    private fun saveAndSync() {
+    private fun saveAndSync(epoch: Long) {
         save()
-        scope.launch { runCatching { sync() }.onFailure { setError(it) } }
+        scheduleSync(epoch)
     }
 
     @Synchronized
@@ -415,41 +416,41 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
             .apply()
     }
 
-    @Synchronized
-    fun sync() {
-        val epoch = generation.get()
-        val config = dav() ?: return
-        val database = db ?: error("Unlock the vault to sync")
-        val json = JSONObject(preferences.getString("sync-state", "{}")!!)
-        val state =
-            SyncState(
-                json.optString("endpoint"),
-                json.optString("etag").ifEmpty { null },
-                json.optString("localHash"),
-                json.optString("remoteHash"),
-            )
-        val result = WebDav().sync(file, database, config, state)
-        synchronized(stateLock) {
-            if (generation.get() == epoch && db === database) db = result.database
+    fun sync(epoch: Long = sessionEpoch) =
+        synchronized(this) {
+            check(generation.get() == epoch) { "Sync was cancelled by a later lock" }
+            val config = dav() ?: return@synchronized
+            val database = db ?: error("Unlock the vault to sync")
+            val json = JSONObject(preferences.getString("sync-state", "{}")!!)
+            val state =
+                SyncState(
+                    json.optString("endpoint"),
+                    json.optString("etag").ifEmpty { null },
+                    json.optString("localHash"),
+                    json.optString("remoteHash"),
+                )
+            val result = WebDav().sync(file, database, config, state)
+            synchronized(stateLock) {
+                if (generation.get() == epoch && db === database) db = result.database
+            }
+            val s = result.state
+            preferences
+                .edit()
+                .putString(
+                    "sync-state",
+                    JSONObject()
+                        .put("endpoint", s.endpoint)
+                        .put("etag", s.etag ?: "")
+                        .put("localHash", s.localHash)
+                        .put("remoteHash", s.remoteHash)
+                        .toString(),
+                )
+                .putLong("last-sync", System.currentTimeMillis())
+                .apply()
+            lastSync = android.os.SystemClock.elapsedRealtime()
+            error = null
+            refresh()
         }
-        val s = result.state
-        preferences
-            .edit()
-            .putString(
-                "sync-state",
-                JSONObject()
-                    .put("endpoint", s.endpoint)
-                    .put("etag", s.etag ?: "")
-                    .put("localHash", s.localHash)
-                    .put("remoteHash", s.remoteHash)
-                    .toString(),
-            )
-            .putLong("last-sync", System.currentTimeMillis())
-            .apply()
-        lastSync = android.os.SystemClock.elapsedRealtime()
-        error = null
-        refresh()
-    }
 
     private fun tick() {
         val now = android.os.SystemClock.elapsedRealtime()
@@ -458,7 +459,22 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
             return
         }
         if (db != null && now - lastSync >= preferences.getLong("sync-minutes", 5) * 60_000)
-            runCatching { sync() }.onFailure { setError(it) }
+            scheduleSync(sessionEpoch)
+    }
+
+    private fun scheduleSync(epoch: Long) {
+        // Count a waiting worker as scheduled too, so the timer cannot accumulate jobs.
+        if (!syncScheduled.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                runCatching { sync(epoch) }
+                    .onFailure {
+                        if (sessionEpoch == epoch) setError(it)
+                    }
+            } finally {
+                syncScheduled.set(false)
+            }
+        }
     }
 
     @Synchronized

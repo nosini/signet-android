@@ -23,8 +23,10 @@ pipe deadlines. Run them on Android 26 as well as a current Android version.
 independent of Android's platform BC provider. `api/` implements caller
 certificate registration, approvals, PendingIntent screens, the plain
 request handler, and both OpenPGP AIDL interfaces. `MainActivity` contains the
-Compose UI. `Repository` serializes vault changes and runs idle locking and
-periodic sync. `SecureStore` and `Biometrics` use separate Android Keystore
+Compose UI. `Repository` serializes vault changes. Its idle timer runs independently
+of sync, with at most one queued or running automatic sync worker. Unlock attempts
+carry the cancellation epoch from the initiating action through publication. `SecureStore` and `Biometrics` use separate Android
+Keystore
 keys for WebDAV credentials and authenticated vault-password storage.
 
 A small C helper sets pipe descriptors nonblocking on Android 26–29, where

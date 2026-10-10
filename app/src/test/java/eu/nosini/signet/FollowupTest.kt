@@ -134,4 +134,45 @@ class FollowupTest {
         repo.lock()
     }
 
+    @Test
+    fun periodicSyncMustNotStopIdleLockTimer() {
+        MockWebServer().use { server ->
+            val started = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            server.dispatcher =
+                object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") {
+                            started.countDown()
+                            check(release.await(40, TimeUnit.SECONDS))
+                            return MockResponse.Builder().code(404).build()
+                        }
+                        return MockResponse.Builder().code(204).build()
+                    }
+                }
+            server.start()
+            // Model a device that has been up long enough for lastSync=0 to be due.
+            ShadowSystemClock.advanceBy(Duration.ofMinutes(6))
+            val repo =
+                Repository(RuntimeEnvironment.getApplication()) {
+                    DavConfig(server.url("/vault").toString())
+                }
+            repo.preferences.edit().putLong("lock-minutes", 1).putLong("sync-minutes", 5).commit()
+            repo.create("password")
+            try {
+                assertTrue("Real periodic loop starts sync", started.await(15, TimeUnit.SECONDS))
+                ShadowSystemClock.advanceBy(Duration.ofMinutes(2))
+                Thread.sleep(12_000)
+                println("afterIdleDeadlineAndAnotherTick unlocked=${repo.unlocked}")
+                assertFalse(
+                    "Idle timer must lock while its periodic sync is stalled",
+                    repo.unlocked,
+                )
+            } finally {
+                repo.lock()
+                release.countDown()
+            }
+        }
+    }
+
 }
