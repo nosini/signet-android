@@ -180,33 +180,36 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
         }
     }
 
-    @Synchronized
-    fun unlock(password: String) {
-        val epoch = generation.get()
-        val key = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
-        try {
-            commit(VaultCodec.read(file.readBytes(), credentials(password, key)), epoch)
-            refresh()
-            touch()
-            error = null
-        } finally {
-            key?.fill(0)
+    // The default argument is evaluated before waiting for the mutation monitor.
+    // UI callers pass an epoch captured before queuing their IO job or biometric callback.
+    fun unlock(password: String, epoch: Long = sessionEpoch) {
+        synchronized(this) {
+            check(generation.get() == epoch) { "Unlock was cancelled by a later lock" }
+            val key = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
+            try {
+                commit(VaultCodec.read(file.readBytes(), credentials(password, key)), epoch)
+                refresh()
+                touch()
+                error = null
+            } finally {
+                key?.fill(0)
+            }
         }
         scope.launch { runCatching { sync() }.onFailure { setError(it) } }
     }
 
-    @Synchronized
-    fun create(password: String) {
-        val epoch = generation.get()
-        check(!file.exists()) { "Vault already exists" }
-        val keyFile = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
-        try {
-            commit(VaultCodec.create(password, keyFile), epoch)
-            save()
-        } finally {
-            keyFile?.fill(0)
+    fun create(password: String, epoch: Long = sessionEpoch) =
+        synchronized(this) {
+            check(generation.get() == epoch) { "Create was cancelled by a later lock" }
+            check(!file.exists()) { "Vault already exists" }
+            val keyFile = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
+            try {
+                commit(VaultCodec.create(password, keyFile), epoch)
+                save()
+            } finally {
+                keyFile?.fill(0)
+            }
         }
-    }
 
     @Synchronized
     fun open(bytes: ByteArray) {
@@ -328,30 +331,30 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
         changed()
     }
 
-    @Synchronized
-    fun unlockProtected(id: Long, password: String) {
-        val epoch = generation.get()
-        val database = db ?: error("Unlock the vault first")
-        val candidates =
-            database
-                .keyEntries()
-                .mapNotNull { it.fields[PRIVATE_KEY]?.content }
-                .map { it to Crypto.secretKey(it) }
-                .filter { (_, ring) ->
-                    id == 0L ||
-                        ring.publicKey.keyID == id ||
-                        ring.publicKeys.asSequence().any { it.keyID == id }
+    fun unlockProtected(id: Long, password: String, epoch: Long = sessionEpoch) =
+        synchronized(this) {
+            check(generation.get() == epoch) { "Key unlock was cancelled by a later lock" }
+            val database = db ?: error("Unlock the vault first")
+            val candidates =
+                database
+                    .keyEntries()
+                    .mapNotNull { it.fields[PRIVATE_KEY]?.content }
+                    .map { it to Crypto.secretKey(it) }
+                    .filter { (_, ring) ->
+                        id == 0L ||
+                            ring.publicKey.keyID == id ||
+                            ring.publicKeys.asSequence().any { it.keyID == id }
+                    }
+            for ((armor, ring) in candidates) if (Crypto.protected(ring)) {
+                val unlocked = Crypto.unprotect(ring, password)
+                synchronized(stateLock) {
+                    check(generation.get() == epoch && db === database) {
+                        "Vault was locked during the operation"
+                    }
+                    unlockedKeys[WebDav.hash(armor.toByteArray())] = unlocked
                 }
-        for ((armor, ring) in candidates) if (Crypto.protected(ring)) {
-            val unlocked = Crypto.unprotect(ring, password)
-            synchronized(stateLock) {
-                check(generation.get() == epoch && db === database) {
-                    "Vault was locked during the operation"
-                }
-                unlockedKeys[WebDav.hash(armor.toByteArray())] = unlocked
             }
         }
-    }
 
     fun approve(
         caller: Caller,

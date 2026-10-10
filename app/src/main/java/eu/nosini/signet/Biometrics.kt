@@ -13,6 +13,7 @@ fun FragmentActivity.biometric(
     done: () -> Unit,
     failure: (String) -> Unit,
 ) {
+    val epoch = repository.sessionEpoch
     try {
         val cipher = repository.secure.cipher("biometric", true, enrollPassword == null)
         val prompt =
@@ -30,6 +31,9 @@ fun FragmentActivity.biometric(
                         lifecycleScope.launch {
                             try {
                                 withContext(Dispatchers.IO) {
+                                    check(repository.sessionEpoch == epoch) {
+                                        "Biometric operation was cancelled by a later lock"
+                                    }
                                     val authorized = result.cryptoObject!!.cipher!!
                                     if (enrollPassword != null) {
                                         val bytes = enrollPassword.toByteArray()
@@ -45,7 +49,7 @@ fun FragmentActivity.biometric(
                                     } else {
                                         val bytes = repository.secure.read("biometric", authorized)
                                         try {
-                                            repository.unlock(String(bytes))
+                                            repository.unlock(String(bytes), epoch)
                                         } finally {
                                             bytes.fill(0)
                                         }

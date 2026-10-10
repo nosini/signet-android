@@ -226,11 +226,11 @@ class InteractionActivity : FragmentActivity() {
                                             selected.isNotEmpty()),
                                 onClick = {
                                     busy = true
+                                    val epoch = repo.sessionEpoch
                                     scope.launch {
                                         try {
                                             val result =
                                                 withContext(Dispatchers.IO) {
-                                                    val epoch = repo.sessionEpoch
                                                     require(
                                                         flow.expires > SystemClock.elapsedRealtime()
                                                     ) {
@@ -258,11 +258,12 @@ class InteractionActivity : FragmentActivity() {
                                                                 "App registration revoked"
                                                             }
                                                             if (!repo.unlocked)
-                                                                repo.unlock(password)
+                                                                repo.unlock(password, epoch)
                                                             if (keyPassword.isNotEmpty())
                                                                 repo.unlockProtected(
                                                                     flow.key,
                                                                     keyPassword,
+                                                                    epoch,
                                                                 )
                                                             repo.preferences
                                                                 .edit()

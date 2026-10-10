@@ -203,12 +203,14 @@ class MainActivity : FragmentActivity() {
                                     onClick = {
                                         if (password != repeated || password.isEmpty())
                                             message = "Passwords must match and be nonempty"
-                                        else
+                                        else {
+                                            val epoch = repo.sessionEpoch
                                             work {
-                                                repo.create(password)
+                                                repo.create(password, epoch)
                                                 password = ""
                                                 repeated = ""
                                             }
+                                        }
                                     },
                                 ) {
                                     Text("Create new vault")
@@ -225,8 +227,9 @@ class MainActivity : FragmentActivity() {
                                 Button(
                                     enabled = !busy,
                                     onClick = {
+                                        val epoch = repo.sessionEpoch
                                         work {
-                                            repo.unlock(password)
+                                            repo.unlock(password, epoch)
                                             password = ""
                                         }
                                     },
