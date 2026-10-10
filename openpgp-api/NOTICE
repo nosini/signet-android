@@ -1,0 +1,15 @@
+This module is a vendored copy of the OpenPGP API client library, licensed
+under the Apache License, Version 2.0 (see LICENSE).
+
+Origin:  https://github.com/open-keychain/openpgp-api
+Commit:  f91db6be300e8a777c49bbcb8ad0b3a9a583ef08 ("Update for AGP 7.4.2")
+Copyright (C) 2014-2015 Dominik Schürmann <dominik@dominikschuermann.de> and
+contributors.
+
+Included: the AIDL interfaces, the parcelables (OpenPgpError,
+OpenPgpSignatureResult, OpenPgpDecryptionResult, OpenPgpMetadata,
+AutocryptPeerUpdate), OpenPgpApi, OpenPgpUtils, ParcelFileDescriptorUtil and
+OpenPgpServiceConnection. Package names and source files are unchanged; the
+client UI widgets (OpenPgpAppPreference, OpenPgpKeyPreference) and the example
+app were left out because a provider has no use for them. Only the Gradle
+build script was rewritten.
