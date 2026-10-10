@@ -107,7 +107,7 @@ object VaultCodec {
         val fields =
             (old?.fields ?: EntryFields(emptyMap())) +
                 mapOf(
-                    "Title" to EntryValue.Plain(title),
+                    "Title" to (old?.fields?.get("Title") ?: EntryValue.Plain(title)),
                     PUBLIC_KEY to EntryValue.Plain(publicKey),
                     FINGERPRINT to EntryValue.Plain(fingerprint.uppercase()),
                 ) +

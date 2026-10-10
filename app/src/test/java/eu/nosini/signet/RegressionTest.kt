@@ -304,4 +304,11 @@ class RegressionVaultTest {
         assertEquals(listOf("1", "2", "3", "r"), nextOrder)
     }
 
+    @Test
+    fun updateKeepsCustomTitle() {
+        val original =
+            VaultCodec.put(VaultCodec.create("password"), "AAA", "public", null, "Custom", now)
+        val next = VaultCodec.put(original, "AAA", "new", null, "New UID", now.plusSeconds(1))
+        assertEquals("Custom", next.keyEntries().single().fields["Title"]!!.content)
+    }
 }
