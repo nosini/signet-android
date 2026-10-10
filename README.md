@@ -17,7 +17,10 @@ vault, start from that same file.
 
 Unlock the vault to import or generate keys. Ed25519/X25519 is the default;
 RSA 4096 is also available. Public certificates remain available while
-locked. Secret-key export requires confirmation and the vault password.
+locked. Secret-key export requires confirmation and rechecking the vault credentials.
+For a keyfile-only vault, that check uses the stored key file and an empty
+password; it does not prove the user's presence. Use a master password when
+export reauthentication is important.
 Settings include idle locking, screen-off locking, biometric unlock, sync,
 and connected-app revocation.
 
