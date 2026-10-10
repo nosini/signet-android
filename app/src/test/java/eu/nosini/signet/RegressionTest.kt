@@ -127,6 +127,30 @@ class RegressionProviderTest {
         assertEquals(peer.fingerprint, repo.peers(caller).single().fingerprint)
     }
 
+    @Test
+    fun signingSubkeyApprovalUsesPrimaryId() {
+        val key = CryptoTest.modern
+        val indexed = IndexedKey(Crypto.armor(Crypto.publicPart(key)), true)
+        val subkey = indexed.info.signingSubkeys.first().keyIdentifier.keyId
+        assertNotEquals(indexed.id, subkey)
+        var approvedKey = 0L
+        var mode = ""
+        handler(listOf(indexed)) { m, k ->
+                mode = m
+                approvedKey = k
+                Intent().putExtra(RESULT_CODE, RESULT_CODE_USER_INTERACTION_REQUIRED)
+            }
+            .handle(
+                request(ACTION_DETACHED_SIGN).putExtra(EXTRA_SIGN_KEY_ID, subkey),
+                "data".byteInputStream(),
+                ByteArrayOutputStream(),
+                caller,
+            )
+        assertEquals("approve", mode)
+        assertEquals(indexed.id, approvedKey)
+        assertNotNull(listOf(indexed).find { it.id == approvedKey })
+    }
+
 }
 
 class RegressionVaultTest {

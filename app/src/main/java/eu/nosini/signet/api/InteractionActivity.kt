@@ -111,7 +111,18 @@ class InteractionActivity : FragmentActivity() {
                                 Text(displayText(key.userId))
                                 Text(key.fingerprint.chunked(4).joinToString(" "))
                             } else {
-                                Text("Decrypt using available secret keys")
+                                Text(
+                                    if (
+                                        flow.key == 0L &&
+                                            flow.request.action in
+                                                setOf(
+                                                    ACTION_DECRYPT_VERIFY,
+                                                    ACTION_DECRYPT_METADATA,
+                                                )
+                                    )
+                                        "Decrypt using available secret keys"
+                                    else "Requested key is unavailable"
+                                )
                                 keys
                                     .filter { it.own }
                                     .forEach {

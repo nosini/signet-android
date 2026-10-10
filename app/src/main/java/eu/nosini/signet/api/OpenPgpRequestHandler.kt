@@ -253,7 +253,7 @@ class OpenPgpRequestHandler(
             }
             input.reset()
         }
-        val keyId = if (signing) signingId else decryptId
+        val keyId = if (signing) find(signingId, caller)!!.id else decryptId
         if (signing || encrypted) {
             if (
                 !backend.unlocked ||
