@@ -189,6 +189,18 @@ object VaultCodec {
 object VaultMerge {
     private data class Located<T>(val value: T, val parent: UUID?)
 
+    private fun mergedTimes(content: TimeData?, location: Instant?): TimeData? =
+        if (content != null) content.copy(locationChanged = location)
+        else if (location == null) null
+        else
+            TimeData(
+                creationTime = null,
+                lastAccessTime = null,
+                lastModificationTime = null,
+                expiryTime = null,
+                locationChanged = location,
+            )
+
     private fun time(t: Instant?) = t ?: Instant.EPOCH
 
     // Kotpass EncryptedValue equality compares random memory masks, not plaintext.
@@ -270,9 +282,7 @@ object VaultMerge {
                     Located(
                         winner.value.copy(
                             times =
-                                winner.value.times?.copy(
-                                    locationChanged = move.value.times?.locationChanged
-                                )
+                                mergedTimes(winner.value.times, move.value.times?.locationChanged)
                         ),
                         move.parent,
                     )
@@ -304,10 +314,7 @@ object VaultMerge {
             val snapshot =
                 winner.value.copy(
                     history = emptyList(),
-                    times =
-                        winner.value.times?.copy(
-                            locationChanged = move.value.times?.locationChanged
-                        ),
+                    times = mergedTimes(winner.value.times, move.value.times?.locationChanged),
                 )
             val history =
                 ((a?.value?.history ?: emptyList()) +

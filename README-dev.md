@@ -37,8 +37,9 @@ JVM tests cover both key types, GnuPG vectors and verification of Signet
 output by GnuPG when installed, provider registration and approval tokens,
 locked public operations, parcel formats, codec history and attachments,
 Rust-produced KDBX files, merge, and WebDAV conditions and errors. They use
-Robolectric and MockWebServer. Device tests are needed for actual Keystore,
-biometric prompts, pipe timing, screen-off broadcasts and client-app flows.
+Robolectric and MockWebServer. The test resources include copies of the Linux
+agent's missing-timestamp merge fixtures, so both codecs exercise the same inputs.
+Device tests are needed for actual Keystore, biometric prompts, pipe timing, screen-off broadcasts and client-app flows.
 
 Current dependencies are AGP 8.13.2, Gradle 8.14.2, Kotlin 2.3.21,
 Compose BOM 2026.01.01, Activity 1.12.4, Navigation 2.9.7, Lifecycle 2.10.0,

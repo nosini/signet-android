@@ -330,4 +330,99 @@ class FollowupTest {
         }
     }
 
+    @Test
+    fun linuxFixtureWithAbsentTimesConvergesOnAndroidToo() {
+        fun read(name: String) =
+            VaultCodec.read(
+                javaClass.getResourceAsStream("/vault/$name")!!.use { it.readBytes() },
+                credentials("password"),
+            )
+        val local = read("absent-local.kdbx")
+        val remote = read("absent-remote.kdbx")
+        val forward = VaultMerge.merge(local, remote)
+        val reverse = VaultMerge.merge(remote, local)
+        val rootChild = UUID.fromString("00000000-0000-0000-0000-000000000001")
+        assertEquals(rootChild, forward.content.group.groups.single().uuid)
+        assertEquals(rootChild, reverse.content.group.groups.single().uuid)
+        assertEquals(forward.content.group, VaultMerge.merge(forward, remote).content.group)
+        assertEquals(
+            Instant.ofEpochSecond(10),
+            forward.content.group.groups.single().times?.locationChanged,
+        )
+        assertEquals(
+            Instant.ofEpochSecond(20),
+            forward.content.group.groups.single().groups.single().times?.locationChanged,
+        )
+    }
+
+    @Test
+    fun absentGroupTimesMustNotChangeCycleResolutionWithMergeDirection() {
+        val base = VaultCodec.create("password")
+        val a = Group(UUID.fromString("00000000-0000-0000-0000-000000000001"), "A", times = null)
+        val b = Group(UUID.fromString("00000000-0000-0000-0000-000000000002"), "B", times = null)
+        val movedA =
+            a.copy(
+                times =
+                    TimeData(
+                        creationTime = null,
+                        lastAccessTime = null,
+                        lastModificationTime = null,
+                        expiryTime = null,
+                        locationChanged = Instant.ofEpochSecond(10),
+                    )
+            )
+        val movedB =
+            b.copy(
+                times =
+                    TimeData(
+                        creationTime = null,
+                        lastAccessTime = null,
+                        lastModificationTime = null,
+                        expiryTime = null,
+                        locationChanged = Instant.ofEpochSecond(20),
+                    )
+            )
+        val local =
+            base.withContent(
+                base.content.copy(
+                    group =
+                        base.content.group.copy(groups = listOf(a.copy(groups = listOf(movedB))))
+                )
+            )
+        val remote =
+            base.withContent(
+                base.content.copy(
+                    group =
+                        base.content.group.copy(groups = listOf(b.copy(groups = listOf(movedA))))
+                )
+            )
+        System.getProperty("review.fixture.dir")?.let { directory ->
+            java.io.File(directory, "absent-local.kdbx").writeBytes(local.bytes())
+            java.io.File(directory, "absent-remote.kdbx").writeBytes(remote.bytes())
+        }
+        val diskLocal = VaultCodec.read(local.bytes(), local.credentials)
+        val diskRemote = VaultCodec.read(remote.bytes(), remote.credentials)
+        val forward = VaultMerge.merge(diskLocal, diskRemote)
+        val reverse = VaultMerge.merge(diskRemote, diskLocal)
+        println(
+            "forward root child=${forward.content.group.groups.single().name}; reverse root child=${reverse.content.group.groups.single().name}"
+        )
+        assertEquals(a.uuid, forward.content.group.groups.single().uuid)
+        assertEquals(a.uuid, reverse.content.group.groups.single().uuid)
+        assertEquals(
+            Instant.ofEpochSecond(10),
+            forward.content.group.groups.single().times?.locationChanged,
+        )
+        assertEquals(
+            Instant.ofEpochSecond(20),
+            forward.content.group.groups.single().groups.single().times?.locationChanged,
+        )
+        val repeated = VaultMerge.merge(forward, diskRemote)
+        assertEquals(forward.content.group, repeated.content.group)
+        assertEquals(
+            "The newest edge must survive in both merge directions",
+            forward.content.group.groups.single().uuid,
+            reverse.content.group.groups.single().uuid,
+        )
+    }
 }
