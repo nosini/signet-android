@@ -141,4 +141,70 @@ class RegressionVaultTest {
             }
             .build()
 
+    @Test
+    fun remoteRollbackKeepsNewerLocalKeys() {
+        MockWebServer().use { server ->
+            server.start()
+            val dir = Files.createTempDirectory("signet-review").toFile()
+            try {
+                val file = java.io.File(dir, "vault.kdbx")
+                val v1 = VaultCodec.put(VaultCodec.create("password"), "AAA", "a", "a", "A", now)
+                val v1bytes = v1.bytes()
+                file.writeBytes(v1bytes)
+                val config = DavConfig(server.url("/vault.kdbx").toString(), "user", "password")
+                val dav = WebDav()
+                server.enqueue(response(404))
+                server.enqueue(response(201, etag = "\"one\""))
+                var result = dav.sync(file, v1, config, SyncState())
+                val v2 = VaultCodec.put(result.database, "BBB", "b", "b", "B", now.plusSeconds(5))
+                file.writeBytes(v2.bytes())
+                server.enqueue(response(304))
+                server.enqueue(response(204, etag = "\"two\""))
+                result = dav.sync(file, v2, config, result.state)
+                assertEquals(2, result.database.keyEntries().size)
+                // Server (or a restored file version) now serves the first file again.
+                server.enqueue(response(200, v1bytes, "\"three\""))
+                server.enqueue(response(204, etag = "\"four\""))
+                result = dav.sync(file, result.database, config, result.state)
+                assertTrue(result.changed)
+                assertEquals(2, result.database.keyEntries().size)
+                val reread = VaultCodec.read(file.readBytes(), credentials("password"))
+                assertEquals(
+                    setOf("AAA", "BBB"),
+                    reread.keyEntries().map { it.fields[FINGERPRINT]!!.content }.toSet(),
+                )
+            } finally {
+                dir.deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun unrelatedRemoteRootIsRejectedWithoutChangingLocalFile() {
+        MockWebServer().use { server ->
+            server.start()
+            val dir = Files.createTempDirectory("signet-root-check").toFile()
+            try {
+                val file = java.io.File(dir, "vault.kdbx")
+                val local = VaultCodec.create("password")
+                file.writeBytes(local.bytes())
+                val config = DavConfig(server.url("/vault.kdbx").toString())
+                val dav = WebDav()
+                server.enqueue(response(404))
+                server.enqueue(response(201, etag = "\"one\""))
+                val synced = dav.sync(file, local, config, SyncState())
+                val before = file.readBytes()
+                val unrelated = VaultCodec.create("password")
+                assertNotEquals(local.content.group.uuid, unrelated.content.group.uuid)
+                server.enqueue(response(200, unrelated.bytes(), "\"two\""))
+                assertTrue(
+                    runCatching { dav.sync(file, synced.database, config, synced.state) }.isFailure
+                )
+                assertArrayEquals(before, file.readBytes())
+            } finally {
+                dir.deleteRecursively()
+            }
+        }
+    }
+
 }

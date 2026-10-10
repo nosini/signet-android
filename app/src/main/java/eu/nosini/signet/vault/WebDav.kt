@@ -136,7 +136,11 @@ class WebDav(
                             val bytes = body(response)
                             remoteHash = hash(bytes)
                             try {
-                                VaultCodec.read(bytes, local.credentials)
+                                VaultCodec.read(bytes, local.credentials).also {
+                                    require(it.content.group.uuid == local.content.group.uuid) {
+                                        "Cannot sync databases with different root UUIDs"
+                                    }
+                                }
                             } catch (e: app.keemobile.kotpass.errors.CryptoError.InvalidKey) {
                                 throw SyncFailure(
                                     SyncFailure.Kind.REMOTE_CREDENTIALS,
@@ -157,15 +161,6 @@ class WebDav(
             val remoteChanged = remote != null && remoteHash != state.remoteHash
             if (!missing && (remoteHash == localHash || (!localChanged && !remoteChanged)))
                 return SyncResult(local, SyncState(identity, etag, localHash, remoteHash), false)
-            if (!missing && !localChanged && remoteChanged) {
-                val replacement = remote!!.bytes()
-                replace(file, original, replacement)
-                return SyncResult(
-                    remote,
-                    SyncState(identity, etag, hash(replacement), remoteHash),
-                    true,
-                )
-            }
             val candidate = if (remoteChanged) VaultMerge.merge(local, remote!!) else local
             val bytes = if (candidate === local) original else candidate.bytes()
             val put =

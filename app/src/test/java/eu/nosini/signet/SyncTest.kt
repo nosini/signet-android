@@ -56,8 +56,10 @@ class SyncTest {
                 val remote =
                     VaultCodec.put(result.database, "REMOTE", "public-remote", null, "Remote", now)
                 server.enqueue(response(200, remote.bytes(), "\"three\""))
+                server.enqueue(response(204, etag = "\"three-merged\""))
                 result = dav.sync(file, result.database, config, result.state)
                 assertEquals(2, result.database.keyEntries().size)
+                server.takeRequest()
                 server.takeRequest()
                 val edited =
                     VaultCodec.put(result.database, "THIRD", "public-third", null, "Third", now)
