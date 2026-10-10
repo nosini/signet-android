@@ -19,18 +19,28 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import eu.nosini.signet.*
 import kotlinx.coroutines.*
 import org.openintents.openpgp.util.OpenPgpApi.*
 
 class InteractionActivity : FragmentActivity() {
+    class FlowState : ViewModel() {
+        var flow: PendingFlows.Flow? = null
+    }
+
     private val repo
         get() = (application as SignetApplication).repository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        val flow = intent.getStringExtra("flow")?.let { PendingFlows.take(it) }
+        val retained = ViewModelProvider(this)[FlowState::class.java]
+        val flow = retained.flow ?: intent.getStringExtra("flow")?.let { PendingFlows.take(it) }
+        retained.flow = flow
+        window.decorView.filterTouchesWhenObscured = true
+        if (android.os.Build.VERSION.SDK_INT >= 31) window.setHideOverlayWindows(true)
         if (flow == null) {
             setResult(Activity.RESULT_CANCELED)
             finish()
