@@ -48,7 +48,12 @@ class ProviderTest {
 
             override fun secret(id: Long) = if (unlocked && id == indexed.id) key else null
 
-            override fun updatePeer(address: String, bytes: ByteArray, date: Long) {}
+            override fun updatePeer(
+                caller: Caller,
+                address: String,
+                bytes: ByteArray,
+                date: Long,
+            ) {}
         }
     private val handler =
         OpenPgpRequestHandler(backend, registrations, approvals) { mode, _, _, keyId ->
@@ -85,7 +90,12 @@ class ProviderTest {
 
                 override fun secret(id: Long): org.bouncycastle.openpgp.PGPSecretKeyRing? = null
 
-                override fun updatePeer(address: String, bytes: ByteArray, date: Long) {}
+                override fun updatePeer(
+                    caller: Caller,
+                    address: String,
+                    bytes: ByteArray,
+                    date: Long,
+                ) {}
             }
         val tested =
             OpenPgpRequestHandler(fake, registrations, approvals) { mode, _, _, _ ->
@@ -110,7 +120,9 @@ class ProviderTest {
             )
         assertEquals(
             OpenPgpSignatureResult.SenderStatusResult.USER_ID_MISSING,
-            verify.getParcelableExtra<OpenPgpSignatureResult>(RESULT_SIGNATURE)!!.senderStatusResult,
+            verify
+                .getParcelableExtra<OpenPgpSignatureResult>(RESULT_SIGNATURE)!!
+                .senderStatusResult,
         )
     }
 

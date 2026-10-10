@@ -39,7 +39,13 @@ class SignetApplication : Application() {
     }
 }
 
-data class IndexedKey(val armor: String, val own: Boolean, val entry: String? = null) {
+data class IndexedKey(
+    val armor: String,
+    val own: Boolean,
+    val entry: String? = null,
+    val peerAddress: String? = null,
+    val peerIdentity: String? = null,
+) {
     val certificate: PGPPublicKeyRing
         get() = Crypto.publicKey(armor)
 
@@ -93,6 +99,8 @@ class Repository(val context: Context) {
                 item.getString("armor"),
                 item.optBoolean("own"),
                 item.optString("entry").ifBlank { null },
+                item.optString("peerAddress").ifBlank { null },
+                item.optString("peerIdentity").ifBlank { null },
             )
         }
     }
@@ -102,13 +110,22 @@ class Repository(val context: Context) {
         val array = JSONArray()
         keys.forEach {
             array.put(
-                JSONObject().put("armor", it.armor).put("own", it.own).put("entry", it.entry ?: "")
+                JSONObject()
+                    .put("armor", it.armor)
+                    .put("own", it.own)
+                    .put("entry", it.entry ?: "")
+                    .put("peerAddress", it.peerAddress ?: "")
+                    .put("peerIdentity", it.peerIdentity ?: "")
             )
         }
         atomicWrite(File(context.filesDir, name), array.toString().toByteArray())
     }
 
-    @Synchronized fun keys(): List<IndexedKey> = (index + peers).distinctBy { it.fingerprint }
+    @Synchronized fun keys(): List<IndexedKey> = index
+
+    @Synchronized fun peers(caller: Caller): List<IndexedKey> = peers.filter {
+        it.peerIdentity == caller.identity
+    }
 
     @Synchronized
     fun secret(id: Long): PGPSecretKeyRing? {
@@ -263,9 +280,12 @@ class Repository(val context: Context) {
     }
 
     @Synchronized
-    fun updatePeer(address: String, bytes: ByteArray, date: Long) {
+    fun updatePeer(caller: Caller, rawAddress: String, bytes: ByteArray, rawDate: Long) {
+        val address = OpenPgpRequestHandler.email(rawAddress)
+        val date = minOf(rawDate, System.currentTimeMillis())
+        val stateKey = "peer:${caller.identity}:$address"
         require(bytes.size <= 1024 * 1024) { "Autocrypt key exceeds 1 MiB" }
-        val last = preferences.getLong("peer:$address", 0)
+        val last = preferences.getLong(stateKey, 0)
         if (date < last) return
         val public = Crypto.publicKey(bytes)
         require(
@@ -275,10 +295,10 @@ class Repository(val context: Context) {
         ) {
             "Autocrypt key does not match the peer address"
         }
-        val key = IndexedKey(Crypto.armor(public), false, "peer:$address")
+        val key = IndexedKey(Crypto.armor(public), false, stateKey, address, caller.identity)
         peers = peers.filter { it.entry != key.entry } + key
         writeIndex("autocrypt-index.json", peers)
-        preferences.edit().putLong("peer:$address", date).apply()
+        preferences.edit().putLong(stateKey, date).apply()
         changed()
     }
 

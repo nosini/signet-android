@@ -30,7 +30,8 @@ minutes or until the vault locks. The default is to ask every time.
 
 The provider implements OpenPGP API versions 7–11. Public-key encryption and
 signature verification work while locked. Autocrypt peer keys are stored
-locally and kept separate from vault contacts. Its Autocrypt status reports
+locally, scoped to the calling app and the address they arrived for, and kept
+separate from vault contacts. Its Autocrypt status reports
 key availability; mutual-preference negotiation and gossip processing are
 not implemented. Keyserver lookup and provider backup are unsupported.
 

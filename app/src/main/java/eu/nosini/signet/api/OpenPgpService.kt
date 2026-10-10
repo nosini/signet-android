@@ -54,8 +54,14 @@ class OpenPgpService : Service() {
                 override val unlocked
                     get() = repo.unlocked
 
-                override fun updatePeer(address: String, bytes: ByteArray, date: Long) =
-                    repo.updatePeer(address, bytes, date)
+                override fun peers(caller: Caller) = repo.peers(caller)
+
+                override fun updatePeer(
+                    caller: Caller,
+                    address: String,
+                    bytes: ByteArray,
+                    date: Long,
+                ) = repo.updatePeer(caller, address, bytes, date)
             },
             repo.registrations,
             repo.approvals,

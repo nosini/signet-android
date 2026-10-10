@@ -19,7 +19,9 @@ interface KeyBackend {
 
     val unlocked: Boolean
 
-    fun updatePeer(address: String, bytes: ByteArray, date: Long)
+    fun peers(caller: Caller): List<IndexedKey> = emptyList()
+
+    fun updatePeer(caller: Caller, address: String, bytes: ByteArray, date: Long)
 }
 
 class OpenPgpRequestHandler(
@@ -81,23 +83,25 @@ class OpenPgpRequestHandler(
         }
     }
 
-    private fun find(id: Long) =
-        backend.keys().find { key ->
+    private fun keys(caller: Caller) = backend.keys() + backend.peers(caller)
+
+    private fun find(id: Long, caller: Caller) =
+        keys(caller).find { key ->
             key.id == id || key.certificate.publicKeys.asSequence().any { it.keyID == id }
         }
 
-    private fun recipients(request: Intent): List<IndexedKey>? {
+    private fun recipients(request: Intent, caller: Caller): List<IndexedKey>? {
         val ids =
             request.getLongArrayExtra(EXTRA_KEY_IDS_SELECTED)
                 ?: request.getLongArrayExtra(EXTRA_KEY_IDS)
-        if (ids != null) return ids.map { find(it) ?: return null }.distinctBy { it.id }
+        if (ids != null) return ids.map { find(it, caller) ?: return null }.distinctBy { it.id }
         val emails = request.getStringArrayExtra(EXTRA_USER_IDS) ?: return emptyList()
         return emails
             .map { address ->
-                backend
-                    .keys()
+                keys(caller)
                     .filter {
-                        it.info.validUserIds.any { user -> email(user) == email(address) } &&
+                        (if (it.peerAddress != null) it.peerAddress == email(address)
+                        else it.info.validUserIds.any { user -> email(user) == email(address) }) &&
                             it.info
                                 .getEncryptionSubkeys(
                                     org.pgpainless.algorithm.EncryptionPurpose.ANY
@@ -116,13 +120,13 @@ class OpenPgpRequestHandler(
         caller: Caller,
         action: String,
     ): Intent {
-        val keys = backend.keys()
+        val keys = keys(caller)
         when (action) {
             ACTION_GET_SIGN_KEY_ID,
             ACTION_GET_SIGN_KEY_ID_LEGACY -> {
                 val id = request.getLongExtra(EXTRA_SIGN_KEY_ID, 0)
                 val key =
-                    find(id)?.takeIf { it.own && it.info.signingSubkeys.isNotEmpty() }
+                    find(id, caller)?.takeIf { it.own && it.info.signingSubkeys.isNotEmpty() }
                         ?: return interaction("sign-picker", caller, Intent(request), 0)
                 return success()
                     .putExtra(EXTRA_SIGN_KEY_ID, key.id)
@@ -131,13 +135,13 @@ class OpenPgpRequestHandler(
             }
             ACTION_GET_KEY_IDS -> {
                 val chosen =
-                    recipients(request)
+                    recipients(request, caller)
                         ?: return interaction("recipient-picker", caller, Intent(request), 0)
                 return success().putExtra(RESULT_KEY_IDS, chosen.map { it.id }.toLongArray())
             }
             ACTION_GET_KEY -> {
                 val key =
-                    find(request.getLongExtra(EXTRA_KEY_ID, 0))
+                    find(request.getLongExtra(EXTRA_KEY_ID, 0), caller)
                         ?: error("Key is missing; import it into Signet")
                 output.write(
                     if (request.getBooleanExtra(EXTRA_REQUEST_ASCII_ARMOR, true))
@@ -149,7 +153,7 @@ class OpenPgpRequestHandler(
             ACTION_BACKUP ->
                 return failure("Provider backup is not supported; back up the encrypted vault")
             ACTION_QUERY_AUTOCRYPT_STATUS -> {
-                val chosen = recipients(request)
+                val chosen = recipients(request, caller)
                 return success()
                     .putExtra(
                         RESULT_AUTOCRYPT_STATUS,
@@ -165,7 +169,7 @@ class OpenPgpRequestHandler(
                     request.getParcelableExtra<AutocryptPeerUpdate>(EXTRA_AUTOCRYPT_PEER_UPDATE)
                         ?: error("Missing Autocrypt update")
                 if (update.hasKeyData())
-                    backend.updatePeer(address, update.keyData, update.effectiveDate.time)
+                    backend.updatePeer(caller, address, update.keyData, update.effectiveDate.time)
                 return success()
             }
         }
@@ -183,7 +187,8 @@ class OpenPgpRequestHandler(
         var signingId = request.getLongExtra(EXTRA_SIGN_KEY_ID, 0)
         if (
             signing &&
-                find(signingId)?.takeIf { it.own && it.info.signingSubkeys.isNotEmpty() } == null
+                find(signingId, caller)?.takeIf { it.own && it.info.signingSubkeys.isNotEmpty() } ==
+                    null
         )
             return interaction("sign-picker", caller, Intent(request), 0)
         var decryptId = 0L
@@ -271,7 +276,7 @@ class OpenPgpRequestHandler(
             val verified = metadata.verifiedSignatures.firstOrNull()
             val signature =
                 if (verified != null) {
-                    val issuer = find(verified.signature.keyID)
+                    val issuer = find(verified.signature.keyID, caller)
                     val users = issuer?.info?.userIds.orEmpty()
                     val sender = request.getStringExtra(EXTRA_SENDER_ADDRESS)
                     val senderStatus =
@@ -292,7 +297,9 @@ class OpenPgpRequestHandler(
                     )
                 } else if (metadata.hasSignature) {
                     val missing =
-                        metadata.rejectedSignatures.firstOrNull { find(it.signature.keyID) == null }
+                        metadata.rejectedSignatures.firstOrNull {
+                            find(it.signature.keyID, caller) == null
+                        }
                     if (missing != null)
                         OpenPgpSignatureResult.createWithKeyMissing(
                             missing.signature.keyID,
@@ -323,7 +330,7 @@ class OpenPgpRequestHandler(
         }
         val selected =
             if (action == ACTION_ENCRYPT || action == ACTION_SIGN_AND_ENCRYPT) {
-                val matches = recipients(request)
+                val matches = recipients(request, caller)
                 if (
                     matches.isNullOrEmpty() &&
                         request.getBooleanExtra(EXTRA_OPPORTUNISTIC_ENCRYPTION, false)
@@ -336,7 +343,7 @@ class OpenPgpRequestHandler(
             } else emptyList()
         val recipientCerts = selected.map { it.certificate }.toMutableList()
         if (action == ACTION_SIGN_AND_ENCRYPT)
-            find(signingId)?.let { recipientCerts.add(it.certificate) }
+            find(signingId, caller)?.let { recipientCerts.add(it.certificate) }
         if (action == ACTION_ENCRYPT || action == ACTION_SIGN_AND_ENCRYPT)
             require(recipientCerts.isNotEmpty()) { "No recipients selected" }
         val signer =
