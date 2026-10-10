@@ -255,6 +255,38 @@ class RegressionVaultTest {
     }
 
     @Test
+    fun concurrentGroupMovesRemainAValidTree() {
+        val base = VaultCodec.create("password")
+        val a = Group(UUID.randomUUID(), "A", times = TimeData.create(now))
+        val b = Group(UUID.randomUUID(), "B", times = TimeData.create(now))
+        val start =
+            base.withContent(
+                base.content.copy(group = base.content.group.copy(groups = listOf(a, b)))
+            )
+        val movedA = a.copy(times = a.times!!.copy(locationChanged = now.plusSeconds(1)))
+        val movedB = b.copy(times = b.times!!.copy(locationChanged = now.plusSeconds(2)))
+        val local =
+            start.withContent(
+                start.content.copy(
+                    group =
+                        start.content.group.copy(groups = listOf(b.copy(groups = listOf(movedA))))
+                )
+            )
+        val remote =
+            start.withContent(
+                start.content.copy(
+                    group =
+                        start.content.group.copy(groups = listOf(a.copy(groups = listOf(movedB))))
+                )
+            )
+        val merged = VaultMerge.merge(local, remote)
+        val reversed = VaultMerge.merge(remote, local)
+        assertEquals(merged.content.group, reversed.content.group)
+        assertEquals(1, merged.content.group.groups.size)
+        assertEquals(2, merged.content.group.groups.first().groups.size + 1)
+    }
+
+    @Test
     fun historyStaysOldestFirstAcrossMergeAndEdits() {
         val v1 = VaultCodec.put(VaultCodec.create("password"), "AAA", "1", null, "A", now)
         val v2 = VaultCodec.put(v1, "AAA", "2", null, "A", now.plusSeconds(1))

@@ -348,6 +348,29 @@ object VaultMerge {
         entries.keys.toList().forEach {
             entries[it] = entries.getValue(it).copy(parent = parent(entries[it]!!.parent))
         }
+        // Break the oldest edge of any concurrent move cycle deterministically.
+        for (id in groups.keys.sortedBy { it.toString() }) {
+            val chain = mutableListOf<UUID>()
+            var next: UUID? = id
+            while (next != null) {
+                val start = chain.indexOf(next)
+                if (start >= 0) {
+                    val breakId =
+                        chain
+                            .drop(start)
+                            .minWith(
+                                compareBy<UUID> {
+                                        time(groups.getValue(it).value.times?.locationChanged)
+                                    }
+                                    .thenBy { it.toString() }
+                            )
+                    groups[breakId] = groups.getValue(breakId).copy(parent = rootId)
+                    break
+                }
+                chain.add(next)
+                next = groups.getValue(next).parent
+            }
+        }
         val root = build(rootId, emptySet())
         require(countGroups(root) == groups.size) { "Unreachable groups" }
         val newer =
