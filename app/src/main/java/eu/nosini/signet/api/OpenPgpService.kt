@@ -68,6 +68,7 @@ class OpenPgpService : Service() {
             },
             repo.registrations,
             repo.approvals,
+            repo.grants,
         ) { mode, caller, request, key ->
             val id = PendingFlows.add(mode, caller, request, key)
             val intent =

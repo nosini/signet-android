@@ -312,6 +312,35 @@ class FollowupTest {
     }
 
     @Test
+    fun alwaysAllowIsStoredOnlyWithAValidApprovalAndSurvivesLocking() {
+        val repo = Repository(RuntimeEnvironment.getApplication())
+        repo.open(VaultCodec.create("password").bytes())
+        val caller = Caller(1000, listOf(CallerApp("test.app", setOf("cert"), "Test")))
+        val grant = Grant("decrypt", "F1")
+        repo.unlock("password")
+        // An unregistered app gets neither a token nor a grant.
+        assertTrue(
+            runCatching { repo.approve(caller, ACTION_DECRYPT_VERIFY, 1, 0, repo.sessionEpoch, grant) }
+                .isFailure
+        )
+        assertFalse(repo.grants.allowed(caller, "decrypt", "F1"))
+        repo.registrations.register(caller)
+        val stale = repo.sessionEpoch
+        repo.lock()
+        repo.unlock("password")
+        assertTrue(
+            runCatching { repo.approve(caller, ACTION_DECRYPT_VERIFY, 1, 0, stale, grant) }.isFailure
+        )
+        assertFalse(repo.grants.allowed(caller, "decrypt", "F1"))
+        repo.approve(caller, ACTION_DECRYPT_VERIFY, 1, 0, repo.sessionEpoch, grant)
+        repo.lock()
+        assertTrue(repo.grants.allowed(caller, "decrypt", "F1"))
+        assertFalse(repo.grants.allowed(caller, "sign", "F1"))
+        repo.grants.revokeApp("test.app")
+        repo.registrations.revoke("test.app")
+    }
+
+    @Test
     fun periodicSyncMustNotStopIdleLockTimer() {
         MockWebServer().use { server ->
             val started = CountDownLatch(1)

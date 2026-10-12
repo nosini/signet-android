@@ -67,6 +67,7 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
     val secure = SecureStore(context)
     val registrations: Registrations = AppRegistrations(context)
     val approvals = Approvals()
+    val grants: Grants = AppGrants(context)
     val updates = MutableStateFlow(0)
     val file = File(context.filesDir, "vault.kdbx")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -363,10 +364,12 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
         key: Long,
         rememberMillis: Long,
         epoch: Long,
+        always: Grant? = null,
     ): String =
         synchronized(stateLock) {
             check(db != null && generation.get() == epoch) { "Vault was locked before approval" }
             check(registrations.registered(caller)) { "App registration revoked" }
+            always?.let { grants.grant(caller, it.kind, it.fingerprint) }
             approvals.approve(caller, action, key, rememberMillis)
         }
 

@@ -39,6 +39,16 @@ certificate. Each signing or decryption request asks for approval. The
 approval screen can unlock the vault and offers optional reuse for five
 minutes or until the vault locks. The default is to ask every time.
 
+The approval screen can also always allow an app to decrypt, or to sign,
+with a particular key. Signet then stops asking for approval, even after the
+vault locks; it still asks you to unlock the vault, or to enter a key's own
+passphrase, when the key isn't available. Android identifies the app by its
+package and signing certificate, which other apps can't forge, but anything
+running inside that app can then use the key without you seeing it, including
+an update from its developer. Decryption and signing are allowed separately,
+and you can stop either under Settings, Connected apps. Revoking the app or
+registering it again after its certificate changes removes these grants.
+
 The provider implements OpenPGP API versions 7–12, including the progress
 reports version 12 adds. Public-key encryption and
 signature verification work while locked. Autocrypt peer keys are stored
@@ -85,7 +95,7 @@ vault must use the same vault password and key file.
 
 The server receives only the encrypted vault. Signet has no analytics or
 keyserver traffic. Android system backup is disabled. Public-key indexes,
-key fingerprints and app registrations remain in private local storage while
+key fingerprints, app registrations and always-allow grants remain in private local storage while
 locked. Locking drops decrypted vault and key references; Android's managed
 runtime controls when that memory is reclaimed. Importing a key removes its
 OpenPGP passphrase, so protect your vault password and backups accordingly.

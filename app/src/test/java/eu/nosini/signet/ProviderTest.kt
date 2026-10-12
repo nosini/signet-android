@@ -416,4 +416,101 @@ class ProviderTest {
             p.recycle()
         }
     }
+
+    @Test
+    fun persistentGrantsAreBoundToIdentityKindAndKey() {
+        val context =
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<
+                android.content.Context
+            >()
+        val grants = AppGrants(context)
+        val changed =
+            caller.copy(apps = listOf(caller.apps.single().copy(certificates = setOf("new-cert"))))
+        val shared =
+            Caller(1002, listOf(CallerApp("a.app", setOf("x"), "A"), CallerApp("b.app", setOf("y"), "B")))
+        grants.grant(caller, "decrypt", "F1")
+        grants.grant(shared, "sign", "F2")
+        assertTrue(grants.allowed(caller, "decrypt", "F1"))
+        assertFalse(grants.allowed(caller, "sign", "F1"))
+        assertFalse(grants.allowed(caller, "decrypt", "F2"))
+        assertFalse(grants.allowed(changed, "decrypt", "F1"))
+        assertFalse(grants.allowed(other, "decrypt", "F1"))
+        assertFalse(grants.allowed(Caller(1000, emptyList()), "decrypt", "F1"))
+        assertEquals(listOf(Grant("decrypt", "F1")), grants.list("test.app"))
+        assertEquals(listOf(Grant("sign", "F2")), grants.list("b.app"))
+        grants.revokeApp("b.app")
+        assertFalse(grants.allowed(shared, "sign", "F2"))
+        grants.grant(caller, "sign", "F1")
+        grants.revoke("test.app", Grant("sign", "F1"))
+        assertFalse(grants.allowed(caller, "sign", "F1"))
+        assertTrue(grants.allowed(caller, "decrypt", "F1"))
+        grants.revokeApp("test.app")
+        assertEquals(emptyList<Grant>(), grants.list("test.app"))
+        assertEquals("decrypt", grantKind(ACTION_DECRYPT_METADATA))
+        assertEquals("sign", grantKind(ACTION_SIGN_AND_ENCRYPT))
+        assertNull(grantKind(ACTION_ENCRYPT))
+    }
+
+    @Test
+    fun persistentGrantSkipsApprovalOnlyWhileTheKeyIsUsable() {
+        val context =
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<
+                android.content.Context
+            >()
+        val grants = AppGrants(context)
+        var protectedKey = false
+        val locked =
+            Crypto.secretKey(
+                Crypto.pgp.toAsciiArmor(
+                    Crypto.pgp
+                        .generateKey()
+                        .modernKeyRing(
+                            "Protected <protected@example.org>",
+                            org.pgpainless.util.Passphrase.fromPassword("test-passphrase"),
+                        )
+                )
+            )
+        val keyBackend =
+            object : KeyBackend by backend {
+                override fun secret(id: Long) =
+                    if (protectedKey) locked else backend.secret(id)
+            }
+        val granted =
+            OpenPgpRequestHandler(keyBackend, registrations, approvals, grants) { mode, _, _, _ ->
+                Intent()
+                    .putExtra(RESULT_CODE, RESULT_CODE_USER_INTERACTION_REQUIRED)
+                    .putExtra("mode", mode)
+            }
+        fun run(request: Intent, bytes: ByteArray, from: Caller = caller) =
+            granted.handle(request, bytes.inputStream(), ByteArrayOutputStream(), from)
+        registrations.register(caller)
+        val clear = "always\n".toByteArray()
+        val encrypted =
+            call(request(ACTION_ENCRYPT).putExtra(EXTRA_KEY_IDS, longArrayOf(indexed.id)), clear)
+                .second
+        val decrypt = request(ACTION_DECRYPT_VERIFY)
+        val sign = request(ACTION_SIGN).putExtra(EXTRA_SIGN_KEY_ID, indexed.id)
+        grants.grant(caller, "decrypt", indexed.fingerprint)
+        // A locked vault still needs the approval screen, which then only asks to unlock.
+        assertEquals("approve", run(decrypt, encrypted).getStringExtra("mode"))
+        backend.unlocked = true
+        repeat(2) {
+            assertEquals(RESULT_CODE_SUCCESS, run(decrypt, encrypted).getIntExtra(RESULT_CODE, -1))
+        }
+        // The decryption grant doesn't cover signing, and a key still behind its passphrase
+        // goes through the approval screen.
+        assertEquals("approve", run(sign, clear).getStringExtra("mode"))
+        protectedKey = true
+        assertEquals("approve", run(decrypt, encrypted).getStringExtra("mode"))
+        protectedKey = false
+        grants.grant(caller, "sign", indexed.fingerprint)
+        assertEquals(RESULT_CODE_SUCCESS, run(sign, clear).getIntExtra(RESULT_CODE, -1))
+        grants.revokeApp("test.app")
+        assertEquals("approve", run(decrypt, encrypted).getStringExtra("mode"))
+        // A grant for another app's identity doesn't carry over.
+        val changed =
+            caller.copy(apps = listOf(caller.apps.single().copy(certificates = setOf("new-cert"))))
+        grants.grant(changed, "decrypt", indexed.fingerprint)
+        assertEquals("approve", run(decrypt, encrypted).getStringExtra("mode"))
+    }
 }

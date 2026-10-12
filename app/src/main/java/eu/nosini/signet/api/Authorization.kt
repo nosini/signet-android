@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import java.security.MessageDigest
 import java.security.SecureRandom
+import org.openintents.openpgp.util.OpenPgpApi.*
 
 const val APPROVAL_TOKEN = "eu.nosini.signet.approval"
 
@@ -141,5 +142,94 @@ class Approvals(private val clock: () -> Long = { android.os.SystemClock.elapsed
     private fun cleanup() {
         grants.entries.removeAll { it.value.expires <= clock() }
         remembered.entries.removeAll { it.value <= clock() }
+    }
+}
+
+/** The kind of persistent grant an action needs, or null when it needs no secret key. */
+fun grantKind(action: String): String? =
+    when (action) {
+        ACTION_DECRYPT_VERIFY,
+        ACTION_DECRYPT_METADATA -> "decrypt"
+        ACTION_SIGN,
+        ACTION_CLEARTEXT_SIGN,
+        ACTION_DETACHED_SIGN,
+        ACTION_SIGN_AND_ENCRYPT -> "sign"
+        else -> null
+    }
+
+data class Grant(val kind: String, val fingerprint: String)
+
+/**
+ * "Always allow" grants. Each is bound to the caller's full identity, so a changed signer stops
+ * matching, and survives vault locks. It replaces the approval, not the vault unlock.
+ */
+interface Grants {
+    fun allowed(caller: Caller, kind: String, fingerprint: String): Boolean
+
+    fun grant(caller: Caller, kind: String, fingerprint: String)
+
+    fun list(packageName: String): List<Grant>
+
+    fun revoke(packageName: String, grant: Grant)
+
+    /** Removes every grant whose caller includes the package. */
+    fun revokeApp(packageName: String)
+
+    object None : Grants {
+        override fun allowed(caller: Caller, kind: String, fingerprint: String) = false
+
+        override fun grant(caller: Caller, kind: String, fingerprint: String) =
+            error("Persistent grants are unavailable")
+
+        override fun list(packageName: String) = emptyList<Grant>()
+
+        override fun revoke(packageName: String, grant: Grant) {}
+
+        override fun revokeApp(packageName: String) {}
+    }
+}
+
+class AppGrants(context: Context) : Grants {
+    private val preferences = context.getSharedPreferences("approval-grants", Context.MODE_PRIVATE)
+
+    // Package names, certificate hashes and fingerprints never contain '|'.
+    private fun name(identity: String, kind: String, fingerprint: String) =
+        "$kind|$fingerprint|$identity"
+
+    private fun entries() =
+        preferences.all.keys.mapNotNull { name ->
+            name.split('|', limit = 3).takeIf { it.size == 3 }?.let { (kind, fingerprint, identity) ->
+                Triple(name, Grant(kind, fingerprint), identity.split(';').map { it.substringBefore(':') })
+            }
+        }
+
+    override fun allowed(caller: Caller, kind: String, fingerprint: String) =
+        caller.apps.isNotEmpty() &&
+            preferences.getBoolean(name(caller.identity, kind, fingerprint), false)
+
+    override fun grant(caller: Caller, kind: String, fingerprint: String) {
+        require(caller.apps.isNotEmpty()) { "Caller has no package" }
+        preferences.edit().putBoolean(name(caller.identity, kind, fingerprint), true).commit()
+    }
+
+    override fun list(packageName: String) =
+        entries().filter { packageName in it.third }.map { it.second }.distinct()
+
+    override fun revoke(packageName: String, grant: Grant) {
+        preferences
+            .edit()
+            .apply {
+                entries()
+                    .filter { packageName in it.third && it.second == grant }
+                    .forEach { remove(it.first) }
+            }
+            .commit()
+    }
+
+    override fun revokeApp(packageName: String) {
+        preferences
+            .edit()
+            .apply { entries().filter { packageName in it.third }.forEach { remove(it.first) } }
+            .commit()
     }
 }

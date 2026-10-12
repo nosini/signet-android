@@ -21,7 +21,7 @@ pipe deadlines. Run them on Android 26 as well as a current Android version.
 `vault/` holds the KeePass codec, pure merge and WebDAV implementation.
 `crypto/` wraps PGPainless using lightweight Bouncy Castle cryptography,
 independent of Android's platform BC provider. `api/` implements caller
-certificate registration, approvals, PendingIntent screens, the plain
+certificate registration, approvals, persistent always-allow grants, PendingIntent screens, the plain
 request handler, and both OpenPGP AIDL interfaces. `MainActivity` contains the
 Compose UI. `Repository` serializes vault changes. Its idle timer runs independently
 of sync, with at most one queued or running automatic sync worker. Unlock attempts
@@ -34,7 +34,7 @@ A small C helper sets pipe descriptors nonblocking on Android 26–29, where
 The helper builds for arm64, armv7, x86 and x86_64 with flexible page sizes.
 
 JVM tests cover both key types, GnuPG vectors and verification of Signet
-output by GnuPG when installed, provider registration and approval tokens,
+output by GnuPG when installed, provider registration, approval tokens and always-allow grants,
 locked public operations, parcel formats, codec history and attachments,
 Rust-produced KDBX files, merge, and WebDAV conditions and errors. They use
 Robolectric and MockWebServer. The test resources include copies of the Linux

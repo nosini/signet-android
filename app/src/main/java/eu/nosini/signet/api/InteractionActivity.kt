@@ -68,6 +68,13 @@ class InteractionActivity : FragmentActivity() {
                 val scope = rememberCoroutineScope()
                 val updates by repo.updates.collectAsState()
                 val keys = remember(updates) { repo.keys() }
+                val kind = flow.request.action?.let(::grantKind)
+                val verb = if (kind == "sign") "sign" else "decrypt"
+                val grantKey =
+                    keys.find { it.own && it.id == flow.key }?.takeIf { kind != null }
+                val alwaysAllowed =
+                    grantKey != null &&
+                        repo.grants.allowed(flow.caller, kind!!, grantKey.fingerprint)
                 Surface {
                     Column(
                         Modifier.fillMaxSize()
@@ -181,21 +188,38 @@ class InteractionActivity : FragmentActivity() {
                                 visualTransformation = PasswordVisualTransformation(),
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            Text("Approval policy")
-                            listOf(
-                                    "Ask every time",
-                                    "Allow this operation and key for 5 minutes",
-                                    "Allow until vault locks",
+                            if (alwaysAllowed)
+                                Text(
+                                    "This app is always allowed to $verb with this key. Signet only asks to unlock."
                                 )
-                                .forEachIndexed { i, text ->
-                                    Row {
-                                        RadioButton(
-                                            rememberPolicy == i,
-                                            onClick = { rememberPolicy = i },
-                                        )
-                                        Text(text, Modifier.padding(top = 12.dp))
+                            else {
+                                Text("Approval policy")
+                                (listOf(
+                                        "Ask every time",
+                                        "Allow this operation and key for 5 minutes",
+                                        "Allow until vault locks",
+                                    ) +
+                                        listOfNotNull(
+                                            grantKey?.let {
+                                                "Always allow this app to $verb with this key"
+                                            }
+                                        ))
+                                    .forEachIndexed { i, text ->
+                                        Row {
+                                            RadioButton(
+                                                rememberPolicy == i,
+                                                onClick = { rememberPolicy = i },
+                                            )
+                                            Text(text, Modifier.padding(top = 12.dp))
+                                        }
                                     }
-                                }
+                                if (rememberPolicy == 3)
+                                    Text(
+                                        "Signet won't ask again, even after the vault locks; it only asks to unlock. Anything running inside this app, including a compromised or malicious update from its developer, can then $verb with this key without you seeing it. Revoke this under Settings, Connected apps.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                            }
                         } else {
                             keys
                                 .filter {
@@ -264,8 +288,14 @@ class InteractionActivity : FragmentActivity() {
                                                     }
                                                     val data = Intent(flow.request)
                                                     when (flow.mode) {
-                                                        "register" ->
+                                                        "register" -> {
+                                                            // A re-registration after a signer
+                                                            // change must not revive old grants.
+                                                            flow.caller.apps.forEach {
+                                                                repo.grants.revokeApp(it.packageName)
+                                                            }
                                                             repo.registrations.register(flow.caller)
+                                                        }
                                                         "approve" -> {
                                                             require(
                                                                 repo.registrations.registered(
@@ -282,29 +312,45 @@ class InteractionActivity : FragmentActivity() {
                                                                     keyPassword,
                                                                     epoch,
                                                                 )
-                                                            repo.preferences
-                                                                .edit()
-                                                                .apply {
-                                                                    flow.caller.apps.forEach {
-                                                                        putInt(
-                                                                            "approval-policy:${it.packageName}",
-                                                                            rememberPolicy,
-                                                                        )
+                                                            if (
+                                                                !alwaysAllowed &&
+                                                                    rememberPolicy in 0..2
+                                                            )
+                                                                repo.preferences
+                                                                    .edit()
+                                                                    .apply {
+                                                                        flow.caller.apps.forEach {
+                                                                            putInt(
+                                                                                "approval-policy:${it.packageName}",
+                                                                                rememberPolicy,
+                                                                            )
+                                                                        }
                                                                     }
-                                                                }
-                                                                .apply()
+                                                                    .apply()
                                                             data.putExtra(
                                                                 APPROVAL_TOKEN,
                                                                 repo.approve(
                                                                     flow.caller,
                                                                     data.action!!,
                                                                     flow.key,
-                                                                    when (rememberPolicy) {
-                                                                        1 -> 300_000L
-                                                                        2 -> Long.MAX_VALUE
+                                                                    when {
+                                                                        alwaysAllowed -> 0L
+                                                                        rememberPolicy == 1 ->
+                                                                            300_000L
+                                                                        rememberPolicy == 2 ->
+                                                                            Long.MAX_VALUE
                                                                         else -> 0L
                                                                     },
                                                                     epoch,
+                                                                    if (
+                                                                        rememberPolicy == 3 &&
+                                                                            !alwaysAllowed
+                                                                    )
+                                                                        Grant(
+                                                                            kind!!,
+                                                                            grantKey!!.fingerprint,
+                                                                        )
+                                                                    else null,
                                                                 ),
                                                             )
                                                         }

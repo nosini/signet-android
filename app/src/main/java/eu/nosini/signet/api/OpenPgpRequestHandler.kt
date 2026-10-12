@@ -30,6 +30,7 @@ class OpenPgpRequestHandler(
     private val backend: KeyBackend,
     private val registrations: Registrations,
     private val approvals: Approvals,
+    private val grants: Grants = Grants.None,
     private val interaction: (String, Caller, Intent, Long) -> Intent,
 ) {
     companion object {
@@ -266,14 +267,24 @@ class OpenPgpRequestHandler(
         }
         val keyId = if (signing) find(signingId, caller)!!.id else decryptId
         if (signing || encrypted) {
+            // An "always allow" grant skips the approval only while the key is usable. A locked
+            // vault or a key that still needs its passphrase goes through the approval screen.
+            val granted =
+                backend.unlocked &&
+                    keys
+                        .find { it.own && it.id == keyId }
+                        ?.let { grants.allowed(caller, grantKind(action)!!, it.fingerprint) } ==
+                        true &&
+                    backend.secret(keyId)?.let { !Crypto.protected(it) } == true
             if (
-                !backend.unlocked ||
-                    !approvals.consume(
-                        caller,
-                        action,
-                        keyId,
-                        request.getStringExtra(APPROVAL_TOKEN),
-                    )
+                !granted &&
+                    (!backend.unlocked ||
+                        !approvals.consume(
+                            caller,
+                            action,
+                            keyId,
+                            request.getStringExtra(APPROVAL_TOKEN),
+                        ))
             )
                 return interaction("approve", caller, Intent(request), keyId)
         }

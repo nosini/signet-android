@@ -867,9 +867,27 @@ class MainActivity : FragmentActivity() {
                                             "Approval: ${listOf("ask every time", "5 minutes", "until vault locks")[appPolicy]}"
                                         )
                                     }
+                                    repo.grants.list(app).forEach { grant ->
+                                        val key = repo.keys().find { it.fingerprint == grant.fingerprint }
+                                        Text(
+                                            "Always allowed to ${grant.kind}: " +
+                                                (key?.let { displayText(it.userId) + "\n" } ?: "") +
+                                                grant.fingerprint.chunked(4).joinToString(" "),
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                        TextButton(
+                                            onClick = {
+                                                repo.grants.revoke(app, grant)
+                                                appRevision++
+                                            }
+                                        ) {
+                                            Text("Stop always allowing")
+                                        }
+                                    }
                                     TextButton(
                                         onClick = {
                                             repo.registrations.revoke(app)
+                                            repo.grants.revokeApp(app)
                                             repo.approvals.clear()
                                             appRevision++
                                         }
