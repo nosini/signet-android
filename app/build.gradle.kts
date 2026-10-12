@@ -16,7 +16,10 @@ android {
     }
     ndkVersion = "27.0.12077973"
     externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

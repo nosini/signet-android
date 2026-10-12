@@ -85,3 +85,19 @@ the keystore; losing it means users have to reinstall.
 The workflow fails if the signed APK's certificate differs from
 `CERT_SHA256`, the fingerprint published in README.md. Update both if the
 release key ever changes.
+
+## Releases
+
+To publish a release, raise `versionCode` and set `versionName` in
+`app/build.gradle.kts`, commit, then push a tag named after the version:
+
+```sh
+git tag -s v0.2.0 -m "Signet 0.2.0"
+git push origin main v0.2.0
+```
+
+The workflow refuses a tag that differs from `versionName` or a build without
+the signing secrets. It publishes `signet-0.2.0.apk` and its SHA-256 checksum
+as a GitHub release whose notes include the certificate fingerprint. A tag
+with a suffix, such as `v0.2.0-rc1`, becomes a prerelease. Android does not
+install an update whose `versionCode` is lower than the installed one.

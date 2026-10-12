@@ -762,9 +762,9 @@ class MainActivity : FragmentActivity() {
                                         Text("Revoke")
                                     }
                                 }
-                            Text("Signet 0.1.0 · GPL-3.0-or-later")
+                            Text("Signet ${BuildConfig.VERSION_NAME} · GPL-3.0-or-later")
                             Text(
-                                "Source: see the source repository supplied with this build. No analytics. Network access is limited to your configured WebDAV server."
+                                "Source: https://github.com/nosini/signet-android. No analytics. Network access is limited to your configured WebDAV server."
                             )
                         }
                     }

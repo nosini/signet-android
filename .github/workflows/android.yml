@@ -3,11 +3,17 @@ name: Android
 on:
   push:
     branches: [main]
+    # Pushing a tag like v0.2.0 publishes a GitHub release.
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  # The release certificate published in README.md.
+  CERT_SHA256: adcd17f7746235d578e42b909550926b8f9ac9be7b3aade1983bbcff55b03f44
 
 concurrency:
   group: android-${{ github.ref }}
@@ -24,8 +30,6 @@ jobs:
       NDK_VERSION: 27.0.12077973
       COMPILE_SDK: '36'
       BUILD_TOOLS: 36.0.0
-      # The release certificate published in README.md.
-      CERT_SHA256: adcd17f7746235d578e42b909550926b8f9ac9be7b3aade1983bbcff55b03f44
       # Optional release signing. Without these secrets (and in pull requests
       # from forks) only the debug APK is published.
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -33,6 +37,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Check the release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(sed -n 's/^ *versionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match versionName $version"
+            exit 1
+          fi
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Releases need the ANDROID_KEYSTORE_* signing secrets"
+            exit 1
+          fi
 
       - uses: gradle/actions/wrapper-validation@v6
 
@@ -100,3 +119,45 @@ jobs:
           name: signet-release
           path: app/build/outputs/apk/release/signet-release.apk
           if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: signet-release
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          apk=signet-$version.apk
+          mv signet-release.apk "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          cat > notes.md <<EOF
+          Install \`$apk\` on Android 8.0 or later. Updates install over earlier
+          releases; debug builds must be uninstalled first.
+
+          Signing certificate, in the format AppVerifier accepts:
+
+          \`\`\`
+          eu.nosini.signet
+          $(sed 's/../&:/g; s/:$//' <<< "${CERT_SHA256^^}")
+          \`\`\`
+
+          APK SHA-256: \`$(cut -d' ' -f1 "$apk.sha256")\`
+          EOF
+          prerelease=()
+          if [[ $version == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" "$apk" "$apk.sha256" -R "$GITHUB_REPOSITORY" \
+            --verify-tag --title "Signet $version" --notes-file notes.md \
+            --generate-notes "${prerelease[@]}"

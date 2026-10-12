@@ -10,8 +10,14 @@ licensed under **GPL-3.0-or-later**. The application ID is `eu.nosini.signet`.
 
 ## Installation and use
 
-Build the APK using [README-dev.md](README-dev.md), install it,
-and open Signet. Create a new vault, open an existing KDBX file, or connect to
+Download `signet-VERSION.apk` from the
+[releases page](https://github.com/nosini/signet-android/releases) and open it
+on your phone; Android asks you to allow installing apps from your browser or
+file manager. Signet needs Android 8.0 or later. Apps such as Obtainium can
+install new releases from that page as they appear. To build the APK
+yourself, see [README-dev.md](README-dev.md).
+
+Open Signet. Create a new vault, open an existing KDBX file, or connect to
 the WebDAV URL of an existing vault. If Signet for Linux already created your
 vault, start from that same file.
 
