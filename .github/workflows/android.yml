@@ -1,8 +1,9 @@
 name: Android
 
+# Pushes to branches don't build; start a build from the Actions tab or with
+# `gh workflow run android.yml` when needed.
 on:
   push:
-    branches: [main]
     # Pushing a tag like v0.2.0 publishes a GitHub release.
     tags: ['v*']
   pull_request:

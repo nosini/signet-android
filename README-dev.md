@@ -54,8 +54,10 @@ independent implementation. No Keyguard source is included.
 
 ## Continuous integration
 
-`.github/workflows/android.yml` runs the build, lint and JVM tests above on
-every push and pull request. It uploads the debug APK as the `signet-debug`
+`.github/workflows/android.yml` runs the build, lint and JVM tests above for
+version tags and pull requests, and when started by hand from the Actions tab
+or with `gh workflow run android.yml -R nosini/signet-android`. Pushes to
+branches don't build. It uploads the debug APK as the `signet-debug`
 artifact. Every CI run signs that APK with a new debug key, so Android will
 not install a later build over it. The app must be uninstalled first, which
 deletes its data.
