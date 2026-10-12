@@ -42,6 +42,24 @@ Android builds and JVM tests do not replace device testing. Biometric unlock,
 Binder pipe deadlines, and the complete flows in client applications should
 be checked on a device before using Signet for important keys.
 
+## Verifying the APK
+
+Signet APKs are signed with this certificate:
+
+```
+eu.nosini.signet
+AD:CD:17:F7:74:62:35:D5:78:E4:2B:90:95:50:92:6B:8F:9A:C9:BE:7B:3A:AD:E1:98:3B:BC:FF:55:B0:3F:44
+```
+
+To check an APK before installing it, run
+`apksigner verify --print-certs signet-release.apk`. The
+`certificate SHA-256 digest` it prints is the same value in lowercase,
+without colons. After installing, you can share the two lines above to
+[AppVerifier](https://github.com/soupslurpr/AppVerifier), which compares them
+with the installed app. Android only installs an update signed with the same
+certificate as the installed app, so a mismatch also shows up as a failed
+update.
+
 ## WebDAV and storage
 
 Use the HTTPS URL of a `.kdbx` file with **Connect WebDAV** when setting up a

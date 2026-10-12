@@ -81,3 +81,7 @@ password for the key.
 With these secrets the workflow also uploads `signet-release`, an APK signed
 by `apksigner`. Builds with this key can update each other. Keep a backup of
 the keystore; losing it means users have to reinstall.
+
+The workflow fails if the signed APK's certificate differs from
+`CERT_SHA256`, the fingerprint published in README.md. Update both if the
+release key ever changes.

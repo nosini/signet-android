@@ -24,6 +24,8 @@ jobs:
       NDK_VERSION: 27.0.12077973
       COMPILE_SDK: '36'
       BUILD_TOOLS: 36.0.0
+      # The release certificate published in README.md.
+      CERT_SHA256: adcd17f7746235d578e42b909550926b8f9ac9be7b3aade1983bbcff55b03f44
       # Optional release signing. Without these secrets (and in pull requests
       # from forks) only the debug APK is published.
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -82,7 +84,14 @@ jobs:
           "$tools/apksigner" sign --ks "$keystore" --ks-pass env:KEYSTORE_PASSWORD \
             --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
             --out "$out/signet-release.apk" "$out/aligned.apk"
-          "$tools/apksigner" verify --print-certs "$out/signet-release.apk"
+          certs=$("$tools/apksigner" verify --print-certs "$out/signet-release.apk")
+          echo "$certs"
+          # One signer, and it must be the published certificate.
+          test "$(grep -c 'certificate SHA-256 digest' <<< "$certs")" = 1
+          grep -qx "Signer #1 certificate SHA-256 digest: $CERT_SHA256" <<< "$certs" || {
+            echo "::error::The release key's certificate does not match README.md"
+            exit 1
+          }
 
       - name: Upload release APK
         if: env.KEYSTORE_BASE64 != ''
