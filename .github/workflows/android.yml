@@ -1,0 +1,93 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Keep in step with app/build.gradle.kts and gradle/libs.versions.toml.
+      NDK_VERSION: 27.0.12077973
+      COMPILE_SDK: '36'
+      BUILD_TOOLS: 36.0.0
+      # Optional release signing. Without these secrets (and in pull requests
+      # from forks) only the debug APK is published.
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: gradle/actions/wrapper-validation@v6
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-$COMPILE_SDK" "build-tools;$BUILD_TOOLS" "ndk;$NDK_VERSION" > /dev/null
+
+      - name: Build, lint and test
+        run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug testDebugUnitTest
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reports
+          path: |
+            app/build/reports/
+            openpgp-api/build/reports/
+          if-no-files-found: ignore
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: signet-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Sign release APK
+        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          keystore="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$keystore"' EXIT
+          base64 -d <<< "$KEYSTORE_BASE64" > "$keystore"
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          out=app/build/outputs/apk/release
+          "$tools/zipalign" -P 16 -f 4 "$out/app-release-unsigned.apk" "$out/aligned.apk"
+          "$tools/apksigner" sign --ks "$keystore" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
+            --out "$out/signet-release.apk" "$out/aligned.apk"
+          "$tools/apksigner" verify --print-certs "$out/signet-release.apk"
+
+      - name: Upload release APK
+        if: env.KEYSTORE_BASE64 != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: signet-release
+          path: app/build/outputs/apk/release/signet-release.apk
+          if-no-files-found: error

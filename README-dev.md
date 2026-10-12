@@ -51,3 +51,33 @@ The complete declarations are in `gradle/libs.versions.toml`.
 `openpgp-api/` vendors the Apache-2.0 client API with its original packages,
 AIDL and parcel formats; see its LICENSE and NOTICE. Signet's provider is an
 independent implementation. No Keyguard source is included.
+
+## Continuous integration
+
+`.github/workflows/android.yml` runs the build, lint and JVM tests above on
+every push and pull request. It uploads the debug APK as the `signet-debug`
+artifact. Every CI run signs that APK with a new debug key, so Android will
+not install a later build over it. The app must be uninstalled first, which
+deletes its data.
+
+For a release APK with a stable signature, generate a keystore on your own
+machine, outside any source checkout, and store it in the repository's
+secrets:
+
+```sh
+keytool -genkeypair -keystore signet-release.jks -alias signet \
+  -keyalg EC -groupname secp256r1 -validity 10000 -dname CN=Signet
+tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT
+base64 -w0 signet-release.jks > "$tmp" && test -s "$tmp" &&
+  gh secret set ANDROID_KEYSTORE_BASE64 -R nosini/signet-android < "$tmp"
+gh secret set ANDROID_KEY_ALIAS -R nosini/signet-android --body signet
+gh secret set ANDROID_KEYSTORE_PASSWORD -R nosini/signet-android
+gh secret set ANDROID_KEY_PASSWORD -R nosini/signet-android
+```
+
+The last two commands prompt for a password. Enter the keystore password
+`keytool` asked for at both prompts, because a PKCS12 keystore uses the same
+password for the key.
+With these secrets the workflow also uploads `signet-release`, an APK signed
+by `apksigner`. Builds with this key can update each other. Keep a backup of
+the keystore; losing it means users have to reinstall.
