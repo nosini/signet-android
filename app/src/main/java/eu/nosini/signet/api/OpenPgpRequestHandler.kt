@@ -192,14 +192,7 @@ class OpenPgpRequestHandler(
                     )
             }
             ACTION_UPDATE_AUTOCRYPT_PEER -> {
-                val address =
-                    request.getStringExtra(EXTRA_AUTOCRYPT_PEER_ID)
-                        ?: error("Missing Autocrypt address")
-                val update =
-                    request.getParcelableExtra<AutocryptPeerUpdate>(EXTRA_AUTOCRYPT_PEER_UPDATE)
-                        ?: error("Missing Autocrypt update")
-                if (update.hasKeyData())
-                    backend.updatePeer(caller, address, update.keyData, update.effectiveDate.time)
+                updatePeer(request, caller)
                 return success()
             }
         }
@@ -215,6 +208,15 @@ class OpenPgpRequestHandler(
         require(signing || decrypting || action == ACTION_ENCRYPT) { "Unsupported OpenPGP action" }
         val progress = Progress(request)
         progress.report(0)
+        // Mail apps such as FairEmail attach the sender's Autocrypt header to the decryption
+        // request instead of sending ACTION_UPDATE_AUTOCRYPT_PEER. Like OpenKeychain, store it
+        // first and don't let a bad header stop the decryption.
+        if (
+            decrypting &&
+                request.hasExtra(EXTRA_AUTOCRYPT_PEER_ID) &&
+                request.hasExtra(EXTRA_AUTOCRYPT_PEER_UPDATE)
+        )
+            runCatching { updatePeer(request, caller) }
         val input = BufferedInputStream(rawInput ?: error("Missing input stream"), 8192)
         var signingId = request.getLongExtra(EXTRA_SIGN_KEY_ID, 0)
         if (
@@ -422,6 +424,16 @@ class OpenPgpRequestHandler(
                 )
             }
         }
+    }
+
+    private fun updatePeer(request: Intent, caller: Caller) {
+        val address =
+            request.getStringExtra(EXTRA_AUTOCRYPT_PEER_ID) ?: error("Missing Autocrypt address")
+        val update =
+            request.getParcelableExtra<AutocryptPeerUpdate>(EXTRA_AUTOCRYPT_PEER_UPDATE)
+                ?: error("Missing Autocrypt update")
+        if (update.hasKeyData())
+            backend.updatePeer(caller, address, update.keyData, update.effectiveDate.time)
     }
 
     private val OpenPgpApiClassLoader

@@ -40,6 +40,7 @@ class ProviderTest {
     private val approvals = Approvals { now }
     private val key = CryptoTest.modern
     private val indexed = IndexedKey(Crypto.armor(Crypto.publicPart(key)), true)
+    private val peerUpdates = mutableListOf<String>()
     private val backend =
         object : KeyBackend {
             override var unlocked = false
@@ -53,7 +54,10 @@ class ProviderTest {
                 address: String,
                 bytes: ByteArray,
                 date: Long,
-            ) {}
+            ) {
+                require(address != "bad@example.org") { "Autocrypt key does not match the peer address" }
+                peerUpdates += address
+            }
         }
     private val handler =
         OpenPgpRequestHandler(backend, registrations, approvals) { mode, _, _, keyId ->
@@ -213,6 +217,33 @@ class ProviderTest {
                 .first
                 .getIntExtra(RESULT_CODE, -1),
         )
+    }
+
+    @Test
+    fun decryptionRequestsCarryAutocryptPeerUpdates() {
+        registrations.register(caller)
+        val encrypted =
+            call(request(ACTION_ENCRYPT).putExtra(EXTRA_KEY_IDS, longArrayOf(indexed.id)), "x".toByteArray())
+                .second
+        fun decrypt(address: String) =
+            call(
+                request(ACTION_DECRYPT_VERIFY)
+                    .putExtra(EXTRA_AUTOCRYPT_PEER_ID, address)
+                    .putExtra(
+                        EXTRA_AUTOCRYPT_PEER_UPDATE,
+                        AutocryptPeerUpdate.createAutocryptPeerUpdate(
+                            Crypto.publicPart(key).encoded,
+                            java.util.Date(1000),
+                        ),
+                    ),
+                encrypted,
+            )
+        // The vault is locked, so decryption asks for approval, but the peer key is stored.
+        assertEquals("approve", decrypt("ed@example.org").first.getStringExtra("mode"))
+        assertEquals(listOf("ed@example.org"), peerUpdates)
+        // A rejected Autocrypt key doesn't stop the decryption request.
+        assertEquals("approve", decrypt("bad@example.org").first.getStringExtra("mode"))
+        assertEquals(listOf("ed@example.org"), peerUpdates)
     }
 
     @Test

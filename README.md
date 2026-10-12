@@ -30,8 +30,10 @@ export reauthentication is important.
 Settings include idle locking, screen-off locking, biometric unlock, sync,
 and connected-app revocation.
 
-In a compatible application such as Thunderbird for Android, FairEmail, or
-Password Store, choose **Signet** as the OpenPGP provider. The first request
+Apps that work with OpenKeychain can use Signet instead: mail apps such as
+Thunderbird for Android, FairEmail and Sterna Mail, and Password Store
+(1.13, its last release). In the app's settings, choose **Signet** as the
+OpenPGP provider. The first request
 asks you to register the application, showing its package and signing
 certificate. Each signing or decryption request asks for approval. The
 approval screen can unlock the vault and offers optional reuse for five
