@@ -37,7 +37,8 @@ certificate. Each signing or decryption request asks for approval. The
 approval screen can unlock the vault and offers optional reuse for five
 minutes or until the vault locks. The default is to ask every time.
 
-The provider implements OpenPGP API versions 7–11. Public-key encryption and
+The provider implements OpenPGP API versions 7–12, including the progress
+reports version 12 adds. Public-key encryption and
 signature verification work while locked. Autocrypt peer keys are stored
 locally, scoped to the calling app and the address they arrived for, and kept
 separate from vault contacts. Its Autocrypt status reports

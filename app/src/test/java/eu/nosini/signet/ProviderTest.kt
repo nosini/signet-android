@@ -158,6 +158,64 @@ class ProviderTest {
     }
 
     @Test
+    fun acceptsApiVersionsSevenToTwelve() {
+        registrations.register(caller)
+        fun code(version: Int, extra: Intent.() -> Unit = {}) =
+            call(Intent(ACTION_CHECK_PERMISSION).putExtra(EXTRA_API_VERSION, version).apply(extra))
+                .first
+                .getIntExtra(RESULT_CODE, -1)
+        for (version in 7..12) assertEquals(RESULT_CODE_SUCCESS, code(version))
+        // K-9 Mail's library sends version 12 with a progress Messenger.
+        assertEquals(
+            RESULT_CODE_SUCCESS,
+            code(12) {
+                putExtra(
+                    EXTRA_PROGRESS_MESSENGER,
+                    android.os.Messenger(android.os.Handler(android.os.Looper.getMainLooper())),
+                )
+            },
+        )
+        assertEquals(RESULT_CODE_ERROR, code(6))
+        assertEquals(RESULT_CODE_ERROR, code(13))
+    }
+
+    @Test
+    fun reportsStagesToTheProgressMessenger() {
+        registrations.register(caller)
+        backend.unlocked = true
+        val reports = mutableListOf<Pair<Int, Int>>()
+        val messenger =
+            android.os.Messenger(
+                android.os.Handler(android.os.Looper.getMainLooper()) {
+                    reports += it.arg1 to it.arg2
+                    true
+                }
+            )
+        val encrypt =
+            request(ACTION_ENCRYPT)
+                .putExtra(EXTRA_API_VERSION, 12)
+                .putExtra(EXTRA_KEY_IDS, longArrayOf(indexed.id))
+        val encrypted = call(Intent(encrypt).putExtra(EXTRA_PROGRESS_MESSENGER, messenger), "x".toByteArray())
+        assertEquals(RESULT_CODE_SUCCESS, encrypted.first.getIntExtra(RESULT_CODE, -1))
+        val decrypt =
+            request(ACTION_DECRYPT_VERIFY)
+                .putExtra(EXTRA_API_VERSION, 12)
+                .putExtra(EXTRA_PROGRESS_MESSENGER, messenger)
+                .putExtra(APPROVAL_TOKEN, approvals.approve(caller, ACTION_DECRYPT_VERIFY, indexed.id))
+        assertEquals(RESULT_CODE_SUCCESS, call(decrypt, encrypted.second).first.getIntExtra(RESULT_CODE, -1))
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        val stages = listOf(0 to 100, 20 to 100, 100 to 100)
+        assertEquals(stages + stages, reports)
+        // Something other than a Messenger under the extra is ignored.
+        assertEquals(
+            RESULT_CODE_SUCCESS,
+            call(Intent(encrypt).putExtra(EXTRA_PROGRESS_MESSENGER, "not a messenger"), "x".toByteArray())
+                .first
+                .getIntExtra(RESULT_CODE, -1),
+        )
+    }
+
+    @Test
     fun approvalsBoundSingleUseAndExpires() {
         val token = approvals.approve(caller, "sign", 7)
         assertFalse(approvals.consume(other, "sign", 7, null))

@@ -4,6 +4,8 @@
 package eu.nosini.signet.api
 
 import android.content.Intent
+import android.os.Message
+import android.os.Messenger
 import eu.nosini.signet.IndexedKey
 import eu.nosini.signet.crypto.Crypto
 import java.io.*
@@ -45,7 +47,10 @@ class OpenPgpRequestHandler(
     fun handle(request: Intent, input: InputStream?, output: OutputStream, caller: Caller): Intent {
         return try {
             request.setExtrasClassLoader(OpenPgpApiClassLoader)
-            if (request.getIntExtra(EXTRA_API_VERSION, -1) !in 7..11)
+            // OpenKeychain accepts 7–12. Version 12 comes from K-9 Mail's fork of the client
+            // library (used by Thunderbird for Android and its forks); it adds an optional
+            // progress Messenger, which Progress reports to.
+            if (request.getIntExtra(EXTRA_API_VERSION, -1) !in 7..12)
                 return failure(
                     "Unsupported OpenPGP API version",
                     OpenPgpError.INCOMPATIBLE_API_VERSIONS,
@@ -208,6 +213,8 @@ class OpenPgpRequestHandler(
                 )
         val decrypting = action in setOf(ACTION_DECRYPT_VERIFY, ACTION_DECRYPT_METADATA)
         require(signing || decrypting || action == ACTION_ENCRYPT) { "Unsupported OpenPGP action" }
+        val progress = Progress(request)
+        progress.report(0)
         val input = BufferedInputStream(rawInput ?: error("Missing input stream"), 8192)
         var signingId = request.getLongExtra(EXTRA_SIGN_KEY_ID, 0)
         if (
@@ -290,6 +297,7 @@ class OpenPgpRequestHandler(
                     }
                 }
             val encoding = if (request.hasExtra(EXTRA_DETACHED_SIGNATURE)) null else charset(input)
+            progress.report(20)
             val metadata =
                 Crypto.consume(
                     input,
@@ -298,6 +306,7 @@ class OpenPgpRequestHandler(
                     secrets,
                     request.getByteArrayExtra(EXTRA_DETACHED_SIGNATURE),
                 )
+            progress.report(100)
             val verified = metadata.verifiedSignatures.firstOrNull()
             val signature =
                 if (verified != null) {
@@ -374,6 +383,7 @@ class OpenPgpRequestHandler(
         val signer =
             if (signing) backend.secret(signingId) ?: error("Signing key unavailable") else null
         val detached = action == ACTION_DETACHED_SIGN
+        progress.report(20)
         val signature =
             Crypto.produce(
                 input,
@@ -390,6 +400,7 @@ class OpenPgpRequestHandler(
                 request.getStringExtra(EXTRA_ORIGINAL_FILENAME) ?: "",
                 request.getBooleanExtra(EXTRA_ENABLE_COMPRESSION, true),
             )
+        progress.report(100)
         return success().apply {
             if (detached) {
                 putExtra(RESULT_DETACHED_SIGNATURE, signature)
@@ -415,4 +426,25 @@ class OpenPgpRequestHandler(
 
     private val OpenPgpApiClassLoader
         get() = OpenPgpError::class.java.classLoader
+}
+
+// Sends (current, total) as arg1/arg2 to the client's optional EXTRA_PROGRESS_MESSENGER, as
+// OpenKeychain does. Signet streams its input, so it reports stages rather than bytes. A remote
+// Messenger.send is a oneway call and cannot stall the operation; after a failed send the
+// reports stop.
+private class Progress(request: Intent) {
+    private var messenger =
+        runCatching { request.getParcelableExtra<Messenger>(EXTRA_PROGRESS_MESSENGER) }.getOrNull()
+
+    fun report(current: Int, total: Int = 100) {
+        val target = messenger ?: return
+        try {
+            target.send(Message.obtain().apply {
+                arg1 = current
+                arg2 = total
+            })
+        } catch (e: Exception) {
+            messenger = null
+        }
+    }
 }
