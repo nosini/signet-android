@@ -13,7 +13,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -61,6 +63,17 @@ class MainActivity : FragmentActivity() {
         var davUrl by remember { mutableStateOf(repo.preferences.getString("dav-url", "")!!) }
         var davUser by remember { mutableStateOf(repo.preferences.getString("dav-user", "")!!) }
         var davPass by remember { mutableStateOf("") }
+        var davConnected by remember { mutableStateOf(davUrl.isNotBlank()) }
+        var davDialog by remember { mutableStateOf(false) }
+        var biometricOn by remember {
+            mutableStateOf(repo.preferences.getBoolean("biometric", false))
+        }
+        var biometricDialog by remember { mutableStateOf(false) }
+        var biometricPassword by remember { mutableStateOf("") }
+        fun openDavDialog() {
+            message = null
+            davDialog = true
+        }
         // `action` runs off the main thread and returns an optional success notice;
         // `after` runs on the main thread once it succeeds.
         fun work(after: () -> Unit = {}, action: () -> String?) {
@@ -192,6 +205,159 @@ class MainActivity : FragmentActivity() {
                 notice?.let {
                     Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.primary)
                 }
+                if (davDialog)
+                    AlertDialog(
+                        onDismissRequest = {
+                            if (!busy) {
+                                davDialog = false
+                                davPass = ""
+                            }
+                        },
+                        title = { Text(if (davConnected) "WebDAV settings" else "Connect WebDAV") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                OutlinedTextField(
+                                    davUrl,
+                                    { davUrl = it },
+                                    label = { Text("HTTPS URL of the KDBX file") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                OutlinedTextField(
+                                    davUser,
+                                    { davUser = it },
+                                    label = { Text("Username") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                PasswordField(davPass, { davPass = it }, "Password")
+                                if (davConnected)
+                                    Text(
+                                        "Leave empty to keep the current password.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                enabled = !busy && davUrl.isNotBlank(),
+                                onClick = {
+                                    val download = !repo.file.exists()
+                                    val keepPassword = davConnected && davPass.isEmpty()
+                                    work(
+                                        after = {
+                                            davDialog = false
+                                            if (download && nav.currentDestination?.route != "keys")
+                                                nav.navigate("keys")
+                                        }
+                                    ) {
+                                        val pass =
+                                            if (keepPassword) repo.dav()?.password ?: "" else davPass
+                                        repo.configureDav(davUrl.trim(), davUser, pass)
+                                        davPass = ""
+                                        davConnected = true
+                                        if (download) {
+                                            repo.open(WebDav().download(repo.dav()!!))
+                                            "Vault downloaded. Enter its master password to unlock it."
+                                        } else if (repo.unlocked) {
+                                            repo.sync()
+                                            "WebDAV settings saved and vault synced"
+                                        } else "WebDAV settings saved. Sync starts after unlocking."
+                                    }
+                                },
+                            ) {
+                                Text(
+                                    if (!repo.file.exists()) "Connect and download"
+                                    else if (davConnected) "Save"
+                                    else "Connect"
+                                )
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                enabled = !busy,
+                                onClick = {
+                                    davDialog = false
+                                    davPass = ""
+                                    message = null
+                                },
+                            ) {
+                                Text("Cancel")
+                            }
+                        },
+                    )
+                if (biometricDialog)
+                    AlertDialog(
+                        onDismissRequest = {
+                            if (!busy) {
+                                biometricDialog = false
+                                biometricPassword = ""
+                            }
+                        },
+                        title = { Text("Enable biometric unlock") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(
+                                    "Enter your master password. Signet keeps it in Android Keystore, available only after biometric authentication."
+                                )
+                                PasswordField(
+                                    biometricPassword,
+                                    { biometricPassword = it },
+                                    "Master password",
+                                )
+                                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                enabled = !busy && biometricPassword.isNotEmpty(),
+                                onClick = {
+                                    val entered = biometricPassword
+                                    busy = true
+                                    message = null
+                                    notice = null
+                                    scope.launch {
+                                        try {
+                                            withContext(Dispatchers.IO) {
+                                                repo.checkPassword(entered)
+                                            }
+                                        } catch (e: Exception) {
+                                            busy = false
+                                            message = e.message ?: "Wrong master password"
+                                            return@launch
+                                        }
+                                        busy = false
+                                        biometricDialog = false
+                                        biometricPassword = ""
+                                        biometric(
+                                            repo,
+                                            entered,
+                                            done = {
+                                                biometricOn = true
+                                                notice = "Biometric unlock enabled"
+                                            },
+                                            failure = { message = it },
+                                        )
+                                    }
+                                },
+                            ) {
+                                Text("Continue")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                enabled = !busy,
+                                onClick = {
+                                    biometricDialog = false
+                                    biometricPassword = ""
+                                    message = null
+                                },
+                            ) {
+                                Text("Cancel")
+                            }
+                        },
+                    )
                 NavHost(
                     navController = nav,
                     startDestination = "keys",
@@ -232,7 +398,7 @@ class MainActivity : FragmentActivity() {
                                 OutlinedButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
                                     Text("Open KDBX file")
                                 }
-                                OutlinedButton(onClick = { nav.navigate("settings") }) {
+                                OutlinedButton(onClick = { openDavDialog() }) {
                                     Text("Connect WebDAV")
                                 }
                             } else if (!repo.unlocked) {
@@ -542,56 +708,38 @@ class MainActivity : FragmentActivity() {
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Text("Settings", style = MaterialTheme.typography.headlineSmall)
-                            OutlinedTextField(
-                                davUrl,
-                                { davUrl = it },
-                                label = { Text("HTTPS URL of the KDBX file") },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            OutlinedTextField(
-                                davUser,
-                                { davUser = it },
-                                label = { Text("WebDAV username") },
-                            )
-                            PasswordField(davPass, { davPass = it }, "WebDAV password")
-                            Button(
+                            SwitchRow(
+                                "WebDAV sync",
+                                if (davConnected)
+                                    listOf(davUrl, davUser).filter { it.isNotBlank() }.joinToString(" · ")
+                                else "Off",
+                                davConnected,
                                 enabled = !busy,
-                                onClick = {
-                                    val download = !repo.file.exists()
-                                    work(after = { if (download) nav.navigate("keys") }) {
-                                        repo.configureDav(davUrl, davUser, davPass)
-                                        davPass = ""
-                                        if (download) {
-                                            repo.open(WebDav().download(repo.dav()!!))
-                                            "Vault downloaded. Enter its master password to unlock it."
-                                        } else if (repo.unlocked) {
-                                            repo.sync()
-                                            "WebDAV settings saved and vault synced"
-                                        } else "WebDAV settings saved. Sync starts after unlocking."
+                                onChange = { on ->
+                                    if (on) openDavDialog()
+                                    else {
+                                        repo.preferences
+                                            .edit()
+                                            .remove("dav-url")
+                                            .remove("dav-user")
+                                            .remove("sync-state")
+                                            .apply()
+                                        repo.secure.delete("webdav")
+                                        davUrl = ""
+                                        davUser = ""
+                                        davConnected = false
+                                        message = null
+                                        notice = "WebDAV disconnected"
                                     }
                                 },
                             ) {
-                                Text(
-                                    if (repo.file.exists()) "Save WebDAV settings"
-                                    else "Connect and download"
-                                )
-                            }
-                            TextButton(
-                                onClick = {
-                                    repo.preferences
-                                        .edit()
-                                        .remove("dav-url")
-                                        .remove("dav-user")
-                                        .remove("sync-state")
-                                        .apply()
-                                    repo.secure.delete("webdav")
-                                    davUrl = ""
-                                    davUser = ""
-                                    message = null
-                                    notice = "WebDAV disconnected"
-                                }
-                            ) {
-                                Text("Disconnect WebDAV")
+                                if (davConnected)
+                                    IconButton(enabled = !busy, onClick = { openDavDialog() }) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_settings),
+                                            contentDescription = "Edit WebDAV settings",
+                                        )
+                                    }
                             }
                             var lockMinutes by remember {
                                 mutableStateOf(
@@ -640,70 +788,37 @@ class MainActivity : FragmentActivity() {
                             var screenLock by remember {
                                 mutableStateOf(repo.preferences.getBoolean("lock-screen", true))
                             }
-                            Row {
-                                Switch(
-                                    screenLock,
-                                    {
-                                        screenLock = it
+                            SwitchRow(
+                                "Lock when screen turns off",
+                                null,
+                                screenLock,
+                                onChange = {
+                                    screenLock = it
+                                    repo.preferences.edit().putBoolean("lock-screen", it).apply()
+                                },
+                            )
+                            SwitchRow(
+                                "Biometric unlock",
+                                if (repo.file.exists()) null else "Set up a vault first",
+                                biometricOn,
+                                enabled = repo.file.exists() && !busy,
+                                onChange = { on ->
+                                    if (on) {
+                                        message = null
+                                        biometricDialog = true
+                                    }
+                                    else {
+                                        repo.secure.delete("biometric")
                                         repo.preferences
                                             .edit()
-                                            .putBoolean("lock-screen", it)
+                                            .putBoolean("biometric", false)
                                             .apply()
-                                    },
-                                )
-                                Text("Lock when screen turns off", Modifier.padding(12.dp))
-                            }
-                            Text("Biometric unlock")
-                            PasswordField(
-                                password,
-                                { password = it },
-                                "Master password to enable biometrics",
-                            )
-                            Button(
-                                enabled = repo.file.exists() && !busy,
-                                onClick = {
-                                    busy = true
-                                    message = null
-                                    notice = null
-                                    scope.launch {
-                                        try {
-                                            withContext(Dispatchers.IO) {
-                                                repo.checkPassword(password)
-                                            }
-                                            biometric(
-                                                repo,
-                                                password,
-                                                done = {
-                                                    busy = false
-                                                    password = ""
-                                                    notice = "Biometric unlock enabled"
-                                                },
-                                                failure = {
-                                                    busy = false
-                                                    message = it
-                                                },
-                                            )
-                                        } catch (e: Exception) {
-                                            busy = false
-                                            message = e.message
-                                        }
+                                        biometricOn = false
+                                        message = null
+                                        notice = "Biometric unlock disabled"
                                     }
                                 },
-                            ) {
-                                Text("Enable biometrics")
-                            }
-                            // Authentication and password validation are performed before enrolling
-                            // the password.
-                            TextButton(
-                                onClick = {
-                                    repo.secure.delete("biometric")
-                                    repo.preferences.edit().putBoolean("biometric", false).apply()
-                                    message = null
-                                    notice = "Biometric unlock disabled"
-                                }
-                            ) {
-                                Text("Disable biometrics")
-                            }
+                            )
                             Text("Default approval policy")
                             var policy by remember {
                                 mutableIntStateOf(repo.preferences.getInt("approval-policy", 0))
@@ -771,6 +886,31 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SwitchRow(
+    title: String,
+    summary: String?,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+    actions: @Composable () -> Unit = {},
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            summary?.let {
+                Text(
+                    displayText(it),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        actions()
+        Switch(checked, onChange, enabled = enabled)
     }
 }
 
