@@ -372,6 +372,20 @@ class Repository(val context: Context, private val davCredentials: (() -> DavCon
 
     @Synchronized
     fun checkPassword(password: String) {
+        // While unlocked, compare with the passphrase hash kotpass keeps instead of
+        // repeating the slow KDF.
+        val unlockedHash = db?.credentials?.passphrase?.getBinary()
+        if (unlockedHash != null && password.isNotEmpty()) {
+            val entered =
+                java.security.MessageDigest.getInstance("SHA-256").digest(password.toByteArray())
+            try {
+                if (java.security.MessageDigest.isEqual(entered, unlockedHash)) return
+                error("Wrong master password")
+            } finally {
+                entered.fill(0)
+                unlockedHash.fill(0)
+            }
+        }
         val key = File(context.filesDir, "keyfile").takeIf { it.exists() }?.readBytes()
         try {
             VaultCodec.read(file.readBytes(), credentials(password, key))

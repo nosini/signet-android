@@ -254,6 +254,28 @@ class FollowupTest {
     }
 
     @Test
+    fun passwordCheckWhileUnlockedSkipsTheKdfButStillRejectsWrongPasswords() {
+        val repo = Repository(RuntimeEnvironment.getApplication())
+        val password = "pässwörd ✓"
+        repo.create(password)
+        repo.lock()
+        repo.unlock(password)
+        // Without the vault file, only the in-memory comparison can succeed.
+        val moved = java.io.File(repo.file.path + ".moved")
+        assertTrue(repo.file.renameTo(moved))
+        try {
+            repo.checkPassword(password)
+            assertTrue(runCatching { repo.checkPassword("pässwörd") }.isFailure)
+            assertTrue(runCatching { repo.checkPassword("") }.isFailure)
+        } finally {
+            assertTrue(moved.renameTo(repo.file))
+        }
+        repo.lock()
+        repo.checkPassword(password)
+        assertTrue(runCatching { repo.checkPassword("pässwörd") }.isFailure)
+    }
+
+    @Test
     fun staleProtectedKeyUnlockCannotPopulateAReopenedSession() {
         val protected =
             Crypto.secretKey(

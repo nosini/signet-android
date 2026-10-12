@@ -1,0 +1,4 @@
+<resources>
+    <!-- Window background before Compose draws; values-night has the dark variant. -->
+    <style name="Theme.Signet" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

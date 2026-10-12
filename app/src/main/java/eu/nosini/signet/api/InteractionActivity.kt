@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -35,6 +36,7 @@ class InteractionActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         val retained = ViewModelProvider(this)[FlowState::class.java]
         val flow = retained.flow ?: intent.getStringExtra("flow")?.let { PendingFlows.take(it) }
@@ -47,7 +49,7 @@ class InteractionActivity : FragmentActivity() {
             return
         }
         setContent {
-            MaterialTheme {
+            SignetTheme {
                 var password by remember { mutableStateOf("") }
                 var keyPassword by remember { mutableStateOf("") }
                 var error by remember { mutableStateOf<String?>(null) }
@@ -68,7 +70,10 @@ class InteractionActivity : FragmentActivity() {
                 val keys = remember(updates) { repo.keys() }
                 Surface {
                     Column(
-                        Modifier.fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
+                        Modifier.fillMaxSize()
+                            .padding(WindowInsets.safeDrawing.asPaddingValues())
+                            .padding(24.dp)
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Text(
@@ -152,7 +157,18 @@ class InteractionActivity : FragmentActivity() {
                                 if (repo.preferences.getBoolean("biometric", false))
                                     TextButton(
                                         onClick = {
-                                            biometric(repo, done = {}, failure = { error = it })
+                                            biometric(
+                                                repo,
+                                                started = {
+                                                    busy = true
+                                                    error = null
+                                                },
+                                                done = { busy = false },
+                                                failure = {
+                                                    busy = false
+                                                    error = it
+                                                },
+                                            )
                                         }
                                     ) {
                                         Text("Unlock with biometrics")
@@ -209,6 +225,7 @@ class InteractionActivity : FragmentActivity() {
                                     }
                                 }
                         }
+                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedButton(

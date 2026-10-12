@@ -10,6 +10,8 @@ import kotlinx.coroutines.*
 fun FragmentActivity.biometric(
     repository: Repository,
     enrollPassword: String? = null,
+    // Called after authentication, before the slow vault work that follows it.
+    started: () -> Unit = {},
     done: () -> Unit,
     failure: (String) -> Unit,
 ) {
@@ -28,6 +30,7 @@ fun FragmentActivity.biometric(
                     override fun onAuthenticationSucceeded(
                         result: BiometricPrompt.AuthenticationResult
                     ) {
+                        started()
                         lifecycleScope.launch {
                             try {
                                 withContext(Dispatchers.IO) {

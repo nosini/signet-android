@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -28,8 +29,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        setContent { MaterialTheme { SignetUi() } }
+        setContent { SignetTheme { SignetUi() } }
     }
 
     override fun onUserInteraction() {
@@ -43,6 +45,7 @@ class MainActivity : FragmentActivity() {
         val scope = rememberCoroutineScope()
         val updates by repo.updates.collectAsState()
         var message by remember { mutableStateOf<String?>(null) }
+        var notice by remember { mutableStateOf<String?>(null) }
         var busy by remember { mutableStateOf(false) }
         var importText by remember {
             mutableStateOf(intent.getStringExtra(Intent.EXTRA_TEXT) ?: "")
@@ -58,12 +61,16 @@ class MainActivity : FragmentActivity() {
         var davUrl by remember { mutableStateOf(repo.preferences.getString("dav-url", "")!!) }
         var davUser by remember { mutableStateOf(repo.preferences.getString("dav-user", "")!!) }
         var davPass by remember { mutableStateOf("") }
-        fun work(action: () -> Unit) {
+        // `action` runs off the main thread and returns an optional success notice;
+        // `after` runs on the main thread once it succeeds.
+        fun work(after: () -> Unit = {}, action: () -> String?) {
             busy = true
             message = null
+            notice = null
             scope.launch {
                 try {
-                    withContext(Dispatchers.IO) { action() }
+                    notice = withContext(Dispatchers.IO) { action() }
+                    after()
                 } catch (e: Exception) {
                     message = e.message ?: "Operation failed"
                 } finally {
@@ -78,6 +85,7 @@ class MainActivity : FragmentActivity() {
                         contentResolver.openInputStream(uri)!!.use {
                             repo.open(readBounded(it, 256 * 1024 * 1024))
                         }
+                        "Vault file opened. Enter its master password to unlock it."
                     }
             }
         val keyPicker =
@@ -93,6 +101,7 @@ class MainActivity : FragmentActivity() {
                         } finally {
                             bytes.fill(0)
                         }
+                        "Key file selected"
                     }
             }
         val importPicker =
@@ -120,6 +129,7 @@ class MainActivity : FragmentActivity() {
                             it.write(exportText.toByteArray())
                         }
                         exportText = ""
+                        "Key exported"
                     }
                 else exportText = ""
             }
@@ -179,6 +189,9 @@ class MainActivity : FragmentActivity() {
                 (message ?: repo.error)?.let {
                     Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error)
                 }
+                notice?.let {
+                    Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.primary)
+                }
                 NavHost(
                     navController = nav,
                     startDestination = "keys",
@@ -209,6 +222,7 @@ class MainActivity : FragmentActivity() {
                                                 repo.create(password, epoch)
                                                 password = ""
                                                 repeated = ""
+                                                null
                                             }
                                         }
                                     },
@@ -231,6 +245,7 @@ class MainActivity : FragmentActivity() {
                                         work {
                                             repo.unlock(password, epoch)
                                             password = ""
+                                            null
                                         }
                                     },
                                 ) {
@@ -239,7 +254,17 @@ class MainActivity : FragmentActivity() {
                                 if (repo.preferences.getBoolean("biometric", false))
                                     OutlinedButton(
                                         onClick = {
-                                            biometric(repo, done = {}, failure = { message = it })
+                                            message = null
+                                            notice = null
+                                            biometric(
+                                                repo,
+                                                started = { busy = true },
+                                                done = { busy = false },
+                                                failure = {
+                                                    busy = false
+                                                    message = it
+                                                },
+                                            )
                                         }
                                     ) {
                                         Text("Unlock with biometrics")
@@ -259,7 +284,13 @@ class MainActivity : FragmentActivity() {
                                     }
                                     TextButton(
                                         enabled = !busy,
-                                        onClick = { work { repo.sync() } },
+                                        onClick = {
+                                            work {
+                                                repo.sync()
+                                                if (repo.dav() == null) "WebDAV is not set up"
+                                                else "Synced"
+                                            }
+                                        },
                                     ) {
                                         Text("Sync")
                                     }
@@ -355,6 +386,7 @@ class MainActivity : FragmentActivity() {
                                         repo.importKey(importText, importPass)
                                         importText = ""
                                         importPass = ""
+                                        "Key imported"
                                     }
                                 },
                             ) {
@@ -394,6 +426,7 @@ class MainActivity : FragmentActivity() {
                                         work {
                                             val key = Crypto.generate("$name <$email>", rsa)
                                             repo.importKey(Crypto.armor(key))
+                                            "Key generated"
                                         }
                                 },
                             ) {
@@ -489,7 +522,10 @@ class MainActivity : FragmentActivity() {
                                     OutlinedButton(
                                         enabled = repo.unlocked && !busy,
                                         onClick = {
-                                            work { repo.delete(key.entry) }
+                                            work {
+                                                repo.delete(key.entry)
+                                                null
+                                            }
                                             nav.navigate("keys")
                                         },
                                     ) {
@@ -521,12 +557,17 @@ class MainActivity : FragmentActivity() {
                             Button(
                                 enabled = !busy,
                                 onClick = {
-                                    work {
+                                    val download = !repo.file.exists()
+                                    work(after = { if (download) nav.navigate("keys") }) {
                                         repo.configureDav(davUrl, davUser, davPass)
                                         davPass = ""
-                                        if (!repo.file.exists())
+                                        if (download) {
                                             repo.open(WebDav().download(repo.dav()!!))
-                                        else if (repo.unlocked) repo.sync()
+                                            "Vault downloaded. Enter its master password to unlock it."
+                                        } else if (repo.unlocked) {
+                                            repo.sync()
+                                            "WebDAV settings saved and vault synced"
+                                        } else "WebDAV settings saved. Sync starts after unlocking."
                                     }
                                 },
                             ) {
@@ -546,6 +587,8 @@ class MainActivity : FragmentActivity() {
                                     repo.secure.delete("webdav")
                                     davUrl = ""
                                     davUser = ""
+                                    message = null
+                                    notice = "WebDAV disconnected"
                                 }
                             ) {
                                 Text("Disconnect WebDAV")
@@ -581,12 +624,15 @@ class MainActivity : FragmentActivity() {
                                             sync !in 1..1440
                                     )
                                         message = "Enter 1–1440 minutes"
-                                    else
+                                    else {
                                         repo.preferences
                                             .edit()
                                             .putLong("lock-minutes", lock)
                                             .putLong("sync-minutes", sync)
                                             .apply()
+                                        message = null
+                                        notice = "Intervals saved"
+                                    }
                                 }
                             ) {
                                 Text("Save intervals")
@@ -614,8 +660,11 @@ class MainActivity : FragmentActivity() {
                                 "Master password to enable biometrics",
                             )
                             Button(
-                                enabled = repo.file.exists(),
+                                enabled = repo.file.exists() && !busy,
                                 onClick = {
+                                    busy = true
+                                    message = null
+                                    notice = null
                                     scope.launch {
                                         try {
                                             withContext(Dispatchers.IO) {
@@ -624,10 +673,18 @@ class MainActivity : FragmentActivity() {
                                             biometric(
                                                 repo,
                                                 password,
-                                                done = { password = "" },
-                                                failure = { message = it },
+                                                done = {
+                                                    busy = false
+                                                    password = ""
+                                                    notice = "Biometric unlock enabled"
+                                                },
+                                                failure = {
+                                                    busy = false
+                                                    message = it
+                                                },
                                             )
                                         } catch (e: Exception) {
+                                            busy = false
                                             message = e.message
                                         }
                                     }
@@ -641,6 +698,8 @@ class MainActivity : FragmentActivity() {
                                 onClick = {
                                     repo.secure.delete("biometric")
                                     repo.preferences.edit().putBoolean("biometric", false).apply()
+                                    message = null
+                                    notice = "Biometric unlock disabled"
                                 }
                             ) {
                                 Text("Disable biometrics")
