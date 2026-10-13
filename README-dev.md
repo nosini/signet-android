@@ -62,6 +62,29 @@ artifact. Every CI run signs that APK with a new debug key, so Android will
 not install a later build over it. The app must be uninstalled first, which
 deletes its data.
 
+CI restores Gradle's downloaded dependencies, wrapper distributions and
+local build-task cache. Each run saves a fresh snapshot after the build,
+lint and JVM tests succeed. Gradle reuses cacheable task outputs when their
+inputs match and rebuilds affected tasks when code or dependencies change.
+The snapshots are separated by runner OS, architecture, workflow version
+and Gradle wrapper version. The workflow version includes the pinned Java
+and Android toolchain settings. Cache misses build normally.
+
+Tags and pull requests can restore the default branch's cache, while one
+tag cannot restore another tag's cache. After committing and pushing the
+workflow changes to `main`, warm its cache before releases when needed:
+
+```sh
+gh workflow run android.yml --ref main -R nosini/signet-android
+```
+
+This manual run builds, tests and uploads APK artifacts without creating a
+GitHub release. GitHub removes caches unused for more than seven days and
+evicts older entries when storage fills; see its
+[cache access and retention rules](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
+To discard the saved snapshots, bump `android-gradle-v1` in both the key and
+restore prefix in the workflow.
+
 For a release APK with a stable signature, generate a keystore on your own
 machine, outside any source checkout, and store it in the repository's
 secrets:

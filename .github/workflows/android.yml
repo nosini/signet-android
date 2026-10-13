@@ -60,7 +60,23 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+          cache-jdk: true
+
+      # Keep build environments separate; Gradle checks changed source and
+      # dependency inputs within an environment. A fresh key for each run
+      # saves new task outputs even when the build scripts have not changed.
+      - name: Restore the Gradle build cache
+        id: gradle-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            !~/.gradle/caches/**/*.lock
+            !~/.gradle/caches/**/gc.properties
+          key: android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/android.yml', 'gradle/wrapper/gradle-wrapper.properties') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            android-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/android.yml', 'gradle/wrapper/gradle-wrapper.properties') }}-
 
       - name: Install SDK components
         run: |
@@ -70,6 +86,16 @@ jobs:
 
       - name: Build, lint and test
         run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug testDebugUnitTest
+
+      - name: Save the tested Gradle build cache
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            !~/.gradle/caches/**/*.lock
+            !~/.gradle/caches/**/gc.properties
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Upload test reports
         if: failure()
